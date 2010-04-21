@@ -169,33 +169,6 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                          (cons x closedset) (rest openset)
                          came-from g-score h-score f-score))))))))))
       
-(defn breadth-first-search
-  "Starting at FROM, find the shortest path to any block in POSSIBLE-EXITS.
-legal-moves-for-pos-fn must take one argument - the current position."
-  ([from possible-exits legal-moves-for-pos-fn]
-     (let [goal? (fn [pos]
-                   (let [found-matches (filter #(pos= pos %1) possible-exits)]
-                     (if (empty? found-matches)
-                       nil
-                       found-matches)))]
-       (if (goal? from)
-         (list from)
-         (loop [queue (list (list from))]
-           (if (empty? queue)
-             queue
-             (let [[pos & _ :as path] (first queue)
-                   new-positions (remove (fn [newmove] ; only consider legal moves that are not in path already
-                                           (some #(pos= %1 newmove) path))
-                                         (legal-moves-for-pos-fn pos))]
-               (if (empty? new-positions)
-                 (recur (rest queue))
-                 (if-let [goal-found (some goal? new-positions)]
-                   (cons goal-found path)
-                   (recur (concat (rest queue)
-                                  (map #(cons %1 path) new-positions))))))))))))
-
-
-    
 ;;;; Map IO Functions
 (defn map-file-comment? [str]
   (= \; (first str)))
@@ -267,14 +240,6 @@ legal-moves-for-pos-fn must take one argument - the current position."
 (def *simple-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
 (def *simple-map* (map-from-map-file *simple-map-file*))
 
-(time (let [current-map (map-from-map-file *simple-map-file*)]
-        (map-to-map-file "/Users/alanshields/tmp.map"
-                         (set-pos-types
-                          (breadth-first-search (first (filter spawn? current-map))
-                                                (rest (filter spawn? current-map))
-                                                #(all-legal-ground-creep-moves %1 current-map))
-                          'path
-                          current-map))))
 (time (let [current-map (map-from-map-file *simple-map-file*)]
         (map-to-map-file "/Users/alanshields/tmp.map"
                          (set-pos-types
