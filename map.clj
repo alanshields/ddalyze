@@ -40,18 +40,36 @@
        mapdata))
 (defn set-pos-types [poss type mapdata]
   (loop [mapdata mapdata
-         [curpos & restpos] poss]
-    (if (empty? restpos)
+         [curpos & restpos :as poss] poss]
+    (if (empty? poss)
       mapdata
       (recur (set-pos-type curpos type mapdata)
              restpos))))
+(defn room-for-tower? [pos mapdata]
+  (let [b #(block-at-offset pos %1 %2 mapdata)]
+    (every? playable? (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)))))
+(defn place-tower
+  "Will fail only if there is no room for the tower - tower will be allowed to block the path"
+  ([pos mapdata] (let [result (place-tower pos mapdata 'fail)]
+                   (if (= result 'fail)
+                     (throw (Exception. (format "Could not place tower at %s" pos)))
+                     result)))
+  ([pos mapdata on-fail]
+     (let [b #(block-at-offset pos %1 %2 mapdata)]
+       (if (room-for-tower? pos mapdata)
+         (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
+         on-fail))))
 
 ; More interesting questions about maps
 (defn block-at [row column map]
   (first (filter #(is-pos row column %1)
                  map)))
-(defn matching-type [type map]
-  (filter #(is-type type %1) map))
+(defn block-at-offset [pos r c map]
+  (block-at (+ r (:row pos))
+            (+ c (:column pos))
+            map))
+(defn matching-blocks [pred? map]
+  (filter pred? map))
 
 (defn streetwise-distance [from to]
   "Distance when a diagonal is counted as adjacent"
@@ -64,7 +82,10 @@
         column-distance (- (:column from) (:column to))]
     (Math/sqrt (+ (* row-distance row-distance)
                   (* column-distance column-distance)))))
-    
+(defn creep-path-cost [path]
+  "Cost of moving along this path"
+  (reduce +
+          (map #(crow-distance %1 %2) path (rest path))))
 
 (defn blocks-within-distance
   ([pos distance map] (blocks-within-distance pos distance map crow-distance))
@@ -72,7 +93,7 @@
 
 (defn all-legal-ground-creep-moves [pos map]
   (let [offset-block (fn [r c]
-                       (block-at (+ r (:row pos)) (+ c (:column pos)) map))
+                       (block-at-offset pos r c map))
         creep-or-nil (fn [block]
                        (if (and block (creepable? block))
                          block
@@ -91,17 +112,17 @@
                             r
                             d
                             l
-                            (if (or (creep-or-nil u)
-                                    (creep-or-nil r))
+                            (if (and (creep-or-nil u)
+                                     (creep-or-nil r))
                               ur)
-                            (if (or (creep-or-nil r)
-                                    (creep-or-nil d))
+                            (if (and (creep-or-nil r)
+                                     (creep-or-nil d))
                               lr)
-                            (if (or (creep-or-nil d)
-                                    (creep-or-nil l))
+                            (if (and (creep-or-nil d)
+                                     (creep-or-nil l))
                               ll)
-                            (if (or (creep-or-nil l)
-                                    (creep-or-nil u))
+                            (if (and (creep-or-nil l)
+                                     (creep-or-nil u))
                               ul)))))))
 
 (defn a* [from goal legal-moves-for-pos-fn mapdata]
@@ -168,6 +189,15 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                   (recur (legal-moves-for-pos-fn x) x
                          (cons x closedset) (rest openset)
                          came-from g-score h-score f-score))))))))))
+
+(defn draw-path [mapdata]
+  "Draw shortest path between two first goals a map"
+  (set-pos-types (let [[start goal & _] (matching-blocks spawn? mapdata)]
+                   (a* start goal
+                       #(all-legal-ground-creep-moves %1 mapdata)
+                       mapdata))
+                 'path
+                 mapdata))
       
 ;;;; Map IO Functions
 (defn map-file-comment? [str]
@@ -177,7 +207,8 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
      {\X 'out-of-bounds
       \space 'playable
       \O 'spawn
-      \a 'path})
+      \a 'path
+      \T 'tower})
 (def *map-type->-char*
      (zipmap (vals *map-char->-type*)
              (keys *map-char->-type*)))
@@ -230,43 +261,118 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                                                     acc
                                                     (cons (reverse currow) acc)))
           (recur map-rest (:row block) (cons chr currow) acc))))))
+
+(defn map-to-string [mapdata]
+  (let [lines (map #(apply str %1)
+                   (row-map mapdata map-type-to-file-char))]
+    (apply str (interpose "\n" lines))))
+
 (defn map-to-map-file [file mapdata]
   (write-lines file
                (map #(apply str %1)
                     (row-map mapdata map-type-to-file-char))))
 
+;; Search functions
+(defn exhaustive-search [state moves apply-move-fn legal-move? legal-state? cost-fn cmp]
+  "Finds best moves to apply to achieve best cost via exhaustive search
+apply-move-fn: (fn [state move]) -> state
+legal-move?: (fn [state move]) -> bool
+legal-state?: (fn [state]) -> bool
+cost-fn: (fn [state]) -> comparable via cmp
+cmp: (fn [cost-a cost-b] -> boolean"
+  (let [make-statemove (fn [state moves-remaining] (list state moves-remaining))
+        get-state (fn [statemove] (nth statemove 0))
+        get-moves-remaining (fn [statemove] (nth statemove 1))]
+    (loop [current-winner state
+           current-winner-cost (cost-fn state)
+           queue (list (make-statemove state moves))]
+      (println "Q:" (count queue) "C:" current-winner-cost)
+      (if (empty? queue)
+        (do (println "winner:") (println (map-to-string (draw-path current-winner))) current-winner)
+        (let [candidate (first queue)
+              candidate-cost (cost-fn (get-state candidate))
+              current-winner (do
+                               (println "COMP:" candidate-cost "v" current-winner-cost)
+                               (println (map-to-string (draw-path (get-state candidate))))
+                               (println)
+                               (println "  vs  ")
+                               (println)
+                               (println (map-to-string (draw-path current-winner)))
+                               (println)
+                               (if (cmp candidate-cost current-winner-cost)
+                                 (get-state candidate)
+                                 current-winner))
+              current-winner-cost (if (cmp candidate-cost current-winner-cost)
+                                    candidate-cost
+                                    current-winner-cost)]
+          (println "current winner:")
+          (println (map-to-string (draw-path current-winner)))
+          (println "queue length:" (count queue))
+          (if (empty? (get-moves-remaining candidate))
+            (recur current-winner current-winner-cost
+                   (rest queue))
+            (recur current-winner current-winner-cost
+                   (concat (remove nil? (map (fn [move]
+                                               (if (legal-move? (get-state candidate) move)
+                                                 (let [result (apply-move-fn (get-state candidate) move)]
+                                                   (if (legal-state? result)
+                                                     (make-statemove result
+                                                                     (remove #(= move %1)
+                                                                             (get-moves-remaining candidate)))))))
+                                             (get-moves-remaining candidate)))
+                           (rest queue)))))))))
 
 
 (def *simple-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
 (def *simple-map* (map-from-map-file *simple-map-file*))
 
-(time (let [current-map (map-from-map-file *simple-map-file*)]
-        (map-to-map-file "/Users/alanshields/tmp.map"
-                         (set-pos-types
-                          (a* (first (filter spawn? current-map))
-                              (nth (filter spawn? current-map) 1)
-                              #(all-legal-ground-creep-moves %1 current-map)
-                              current-map)
-                          'path
-                          current-map))))
+;; (time (let [current-map (map-from-map-file *simple-map-file*)]
+;;         (let [current-map (place-tower (struct map-pos 1 1) current-map)]
+;;           (map-to-map-file "/Users/alanshields/tmp.map"
+;;                            (set-pos-types
+;;                             (a* (first (filter spawn? current-map))
+;;                                 (nth (filter spawn? current-map) 1)
+;;                                 #(all-legal-ground-creep-moves %1 current-map)
+;;                                 current-map)
+;;                             'path
+;;                             current-map)))))
 
-(let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")
-      goals (filter spawn? current-map)]
-  (a* (nth goals 0) (nth goals 1) #(all-legal-ground-creep-moves %1 current-map) current-map))
-(let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/basic.map")
-      goals (filter spawn? current-map)]
-  (a* (nth goals 0) (nth goals 1) #(all-legal-ground-creep-moves %1 current-map) current-map))
+;; (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")
+;;       goals (filter spawn? current-map)]
+;;   (a* (nth goals 0) (nth goals 1) #(all-legal-ground-creep-moves %1 current-map) current-map))
+;; (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/basic.map")
+;;       goals (filter spawn? current-map)]
+;;   (a* (nth goals 0) (nth goals 1) #(all-legal-ground-creep-moves %1 current-map) current-map))
 
-(time (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")]
-        (map-to-map-file "/Users/alanshields/tmp.map"
-                         (set-pos-types
-                          (a* (first (filter spawn? current-map))
-                              (nth (filter spawn? current-map) 1)
-                              #(all-legal-ground-creep-moves %1 current-map)
-                              current-map)
-                          'path
-                          current-map))))
+;; (time (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")]
+;;         (map-to-map-file "/Users/alanshields/tmp.map"
+;;                          (set-pos-types
+;;                           (a* (first (filter spawn? current-map))
+;;                               (nth (filter spawn? current-map) 1)
+;;                               #(all-legal-ground-creep-moves %1 current-map)
+;;                               current-map)
+;;                           'path
+;;                           current-map))))
 
-;; (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")]
-;;   (map-to-map-file "/Users/alanshields/tmp.map"
-;;                    current-map))
+(defn shortest-creep-path-cost [mapdata]
+  (let [[start finish & _] (matching-blocks spawn? mapdata)]
+    (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata))))
+
+(defn best-towers-for-creeps [current-map]
+  (let [spawns (filter spawn? current-map)
+        start (nth spawns 0)
+        finish (nth spawns 1)]
+    (exhaustive-search current-map
+                       (filter playable? current-map)
+                       (fn [map pos] (place-tower pos map))
+                       (fn [map pos] (room-for-tower? pos map))
+                       (fn [map] (not (empty? (a* start finish #(all-legal-ground-creep-moves %1 map) map))))
+                       (fn [map] (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 map) map)))
+                       >)))
+
+(defn analyze-map-file [file]
+  (let [current-map (map-from-map-file file)
+        best-towers-map (best-towers-for-creeps current-map)]
+    (println)(println)
+    (println "Result cost: " (shortest-creep-path-cost current-map))
+    (println (map-to-string (draw-path best-towers-map)))))
