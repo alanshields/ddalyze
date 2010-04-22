@@ -435,7 +435,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
                          (remove (fn [[a b]] (adjacent? a b))
                                  (cartesian-product spawns exits)))]
       (if (every? not-empty all-paths)
-        (first (take-n-greatest-by 1 count all-paths))))))
+        (first (take-n-greatest-by 1 count < all-paths))))))
 (defn creep-path-cost [path]
   "Cost of moving along this path"
   (if (empty? path)
