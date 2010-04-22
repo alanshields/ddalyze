@@ -51,6 +51,13 @@
        (= (:column block) col)))
 (defn is-type [type block]
   (= (:type block) type))
+(defn pos-id
+  "If two positions have the same pos-id and the same map, they are the same position.
+Can also be used to do a fast lookup on a position via block-at"
+  ([block map] (pos-id (:row block) (:column block) map))
+  ([r c map] (+ (* (:column-count map) r)
+                c)))
+  
 
 ;; Map functions
 (defn new-map
@@ -73,11 +80,12 @@
       (recur (set-pos-type curpos type mapdata)
              restpos))))
 
-(defn block-at [row column map]
-  (let [vecpos (+ (* (:column-count map) row)
-                  column)]
-    (if (contains? (:blocks map) vecpos)
-      (get (:blocks map) vecpos))))
+(defn block-at
+  ([row column map]
+     (block-at (pos-id row column map) map))
+  ([pos-id map]
+     (if (contains? (:blocks map) pos-id)
+       (get (:blocks map) pos-id))))
 (defn block-at-offset [pos r c map]
   {:pre [(is-pos? pos)
          (number? r)
@@ -224,18 +232,18 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
         v (fn [r c] (+ (* number-of-columns r) c))
         vp (fn [pos] (v (:row pos) (:column pos)))
         estimated-path-distance (fn [pos] (crow-distance pos goal))]
-    (let [f-score (vec (take vecsize (repeat nil)))
-          g-score (vec (take vecsize (repeat nil)))
-          h-score (vec (take vecsize (repeat nil)))
-          came-from (vec (take vecsize (repeat nil)))]
+    (let [f-score (transient (vec (take vecsize (repeat nil))))
+          g-score (transient (vec (take vecsize (repeat nil))))
+          h-score (transient (vec (take vecsize (repeat nil))))
+          came-from (transient (vec (take vecsize (repeat nil))))]
       (loop [add-queue '() ; queue of adjacent positions to x (implements the "for next adjacent")
              x nil
-             closedset '()
+             closedset #{}
              openset (list from)
              came-from came-from
-             g-score (assoc g-score (vp from) 0)
-             h-score (assoc h-score (vp from) (estimated-path-distance from))
-             f-score (assoc f-score (vp from) (estimated-path-distance from))]
+             g-score (assoc! g-score (vp from) 0)
+             h-score (assoc! h-score (vp from) (estimated-path-distance from))
+             f-score (assoc! f-score (vp from) (estimated-path-distance from))]
         (let [reconstruct-path (fn [pos]
                                  (loop [pos pos
                                         accum '()]
@@ -243,7 +251,7 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                                      (recur from (cons pos accum))
                                      (cons pos accum))))
               in-closedset? (fn [pos]
-                             (some #(pos= pos %1) closedset))
+                              (contains? closedset (pos-id pos mapdata)))
               in-openset? (fn [pos]
                             (some #(pos= pos %1) openset))]
           (if (not (empty? add-queue))
@@ -259,10 +267,10 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                            (if (in-openset? y)
                              openset
                              (cons y openset))
-                           (assoc came-from (vp y) x)
-                           (assoc g-score (vp y) tentative-g-score)
-                           (assoc h-score (vp y) (estimated-path-distance y))
-                           (assoc f-score (vp y) (+ tentative-g-score
+                           (assoc! came-from (vp y) x)
+                           (assoc! g-score (vp y) tentative-g-score)
+                           (assoc! h-score (vp y) (estimated-path-distance y))
+                           (assoc! f-score (vp y) (+ tentative-g-score
                                                     (estimated-path-distance y))))
                     (recur (rest add-queue) x closedset openset came-from g-score h-score f-score)))))
             ; generate next add-queue
@@ -273,7 +281,7 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                 (if (pos= x goal)
                   (reconstruct-path x)
                   (recur (legal-moves-for-pos-fn x) x
-                         (cons x closedset) (rest openset)
+                         (conj closedset (pos-id x mapdata)) (rest openset)
                          came-from g-score h-score f-score))))))))))
 
 ;;;; Map IO Functions
