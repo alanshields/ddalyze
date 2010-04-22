@@ -12,7 +12,7 @@
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
 (defstruct mapdata
-  :blocks :shortest-path)
+  :blocks :shortest-path :shortest-path-cost)
 (defstruct map-block
   :row :column :type)
 (defstruct map-pos
@@ -109,10 +109,6 @@
         column-distance (- (:column from) (:column to))]
     (Math/sqrt (+ (* row-distance row-distance)
                   (* column-distance column-distance)))))
-(defn creep-path-cost [path]
-  "Cost of moving along this path"
-  (reduce +
-          (map #(crow-distance %1 %2) path (rest path))))
 
 (defn room-for-tower? [pos mapdata]
   (let [b #(block-at-offset pos %1 %2 mapdata)]
@@ -392,14 +388,26 @@ cmp: (fn [cost-a cost-b] -> boolean"
 (defn a*-shortest-creep-path [mapdata]
   (let [[start finish & _] (matching-blocks spawn? mapdata)]
     (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))
+(defn creep-path-cost [path]
+  "Cost of moving along this path"
+  (if (empty? path)
+    0
+    (reduce +
+            (map #(crow-distance %1 %2) path (rest path)))))
 
 (defn update-map-path [mapinfo]
-  (struct mapdata (:blocks mapinfo) (a*-shortest-creep-path mapinfo)))
+  (let [shortest-path (a*-shortest-creep-path mapinfo)]
+    (struct mapdata (:blocks mapinfo) shortest-path (creep-path-cost shortest-path))))
 (defn shortest-map-path [mapinfo]
   (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
                             (update-map-path mapinfo)
                             mapinfo)]
     (:shortest-path mapinfo-with-path)))
+(defn shortest-map-path-cost [mapinfo]
+  (let [mapinfo-with-path-cost (if (nil? (:shortest-path-cost mapinfo))
+                                 (update-map-path mapinfo)
+                                 mapinfo)]
+    (:shortest-path-cost mapinfo-with-path-cost)))
 
 (defn draw-path [mapdata]
   "Draw shortest path between two first goals a map"
@@ -418,7 +426,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
                     (fn [map pos] (update-map-path (place-tower pos map)))
                     (fn [map pos] (room-for-tower? pos map))
                     (fn [map] (not (empty? (shortest-map-path map))))
-                    (fn [map] (creep-path-cost (shortest-map-path map)))
+                    (fn [map] (shortest-map-path-cost map))
                     >)))
 
 (defn analyze-map-file [file]
@@ -431,4 +439,4 @@ cmp: (fn [cost-a cost-b] -> boolean"
       (println (map-to-string (draw-path best-towers-map))))))
 
 ;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
-(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic2.map"))
+;;(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic2.map"))
