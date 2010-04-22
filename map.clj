@@ -19,6 +19,15 @@
 (defstruct map-pos
   :row :column)
 
+(defn is-pos? [p]
+  (and (:row p)
+       (:column p)))
+(defn is-map? [m]
+  (:blocks m))
+(defn is-map-block? [b]
+  (and (is-pos? b)
+       (:type b)))
+
 ;; Block functions
 (defn pos= [a b]
   "Determine if two blocks are positionally equal"
@@ -64,6 +73,10 @@
   (first (filter #(is-pos row column %1)
                  (:blocks map))))
 (defn block-at-offset [pos r c map]
+  {:pre [(is-pos? pos)
+         (number? r)
+         (number? c)
+         (is-map? map)]}
   (block-at (+ r (:row pos))
             (+ c (:column pos))
             map))
@@ -122,8 +135,12 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
      (>= 1 (distance-fn pos-a pos-b))))
 
 (defn room-for-tower? [pos mapdata]
+  {:pre [(is-pos? pos)
+         (is-map? mapdata)]}
   (let [b #(block-at-offset pos %1 %2 mapdata)]
-    (every? playable? (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)))))
+    (every? #(and (not (nil? %1))
+                  (playable? %1))
+            (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)))))
 (defn place-tower
   "Will fail only if there is no room for the tower - tower will be allowed to block the path"
   ([pos mapdata] (let [result (place-tower pos mapdata 'fail)]
@@ -131,16 +148,23 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
                      (throw (Exception. (format "Could not place tower at %s" pos)))
                      result)))
   ([pos mapdata on-fail]
+     {:pre [(is-pos? pos)
+            (is-map? mapdata)]}
      (let [b #(block-at-offset pos %1 %2 mapdata)]
        (if (room-for-tower? pos mapdata)
          (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
          on-fail))))
 (defn tower-placements-covering-pos [pos mapdata]
   "Returns a list of legal tower placements that covers position pos"
+  {:pre [(is-pos? pos)
+         (is-map? mapdata)]}
   (let [possible-moves (map #(let [[r c] %1]
                                (block-at-offset pos r c mapdata))
                             '((0 0) (-1 0) (0 -1) (-1 -1)))]
-    (filter #(room-for-tower? %1 mapdata) possible-moves)))
+    
+    (filter #(and (not (nil? %1))
+                  (room-for-tower? %1 mapdata))
+            possible-moves)))
 
 (defn blocks-within-distance
   ([pos distance map] (blocks-within-distance pos distance map crow-distance))
