@@ -11,11 +11,14 @@
 
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
+(defstruct mapdata
+  :blocks :shortest-path)
 (defstruct map-block
   :row :column :type)
 (defstruct map-pos
   :row :column)
 
+;; Block functions
 (defn pos= [a b]
   "Determine if two blocks are positionally equal"
   (and (= (:row a) (:row b))
@@ -36,12 +39,16 @@
        (= (:column block) col)))
 (defn is-type [type block]
   (= (:type block) type))
+
+;; Map functions
+(defn new-map [blockdata]
+  (struct mapdata blockdata))
 (defn set-pos-type [pos type mapdata]
   "For pos in the mapdata, set its type to TYPE"
-  (map #(if (pos= pos %1)
-          (struct map-block (:row %1) (:column %1) type)
-          %1)
-       mapdata))
+  (new-map (map #(if (pos= pos %1)
+                   (struct map-block (:row %1) (:column %1) type)
+                   %1)
+                (:blocks mapdata))))
 (defn set-pos-types [poss type mapdata]
   (loop [mapdata mapdata
          [curpos & restpos :as poss] poss]
@@ -50,17 +57,47 @@
       (recur (set-pos-type curpos type mapdata)
              restpos))))
 
-; More interesting questions about maps
 (defn block-at [row column map]
   (first (filter #(is-pos row column %1)
-                 map)))
+                 (:blocks map))))
 (defn block-at-offset [pos r c map]
   (block-at (+ r (:row pos))
             (+ c (:column pos))
             map))
 (defn matching-blocks [pred? map]
-  (filter pred? map))
+  (filter pred? (:blocks map)))
+(defn block-map [fn mapdata]
+  (map fn (:blocks mapdata)))
 
+(defn order-map [map]
+  (new-map 
+   (sort
+    (fn [a b]
+      (let [row-comp (compare (:row a) (:row b))]
+        (if (zero? row-comp)
+          (compare (:column a) (:column b))
+          row-comp)))
+    (:blocks map))))
+
+(defn row-map [map op]
+  "Perform operation OP on each block per row, returning list rows of results"
+  (loop [map (:blocks (order-map map))
+         row -1
+         currow nil
+         acc '()]
+    (if (empty? map)
+      (if (nil? currow)
+        (reverse acc)
+        (reverse (cons (reverse currow) acc)))
+      (let [[block & map-rest] map
+            chr (op (:type block))]
+        (if (not (= row (:row block)))
+          (recur map-rest (:row block) (list chr) (if (nil? currow)
+                                                    acc
+                                                    (cons (reverse currow) acc)))
+          (recur map-rest (:row block) (cons chr currow) acc))))))
+
+; More interesting questions about maps
 (defn streetwise-distance [from to]
   "Distance when a diagonal is counted as adjacent"
   (let [row-distance (Math/abs (- (:row from) (:row to)))
@@ -100,7 +137,7 @@
 
 (defn blocks-within-distance
   ([pos distance map] (blocks-within-distance pos distance map crow-distance))
-  ([pos distance map comparator] (filter #(<= (comparator pos %1) distance) map)))
+  ([pos distance map comparator] (matching-blocks #(<= (comparator pos %1) distance) map)))
 
 (defn all-legal-ground-creep-moves [pos map]
   (let [offset-block (fn [r c]
@@ -143,8 +180,8 @@ h is estimated future path-cost
 
 Uses terminology and pseudocode from Wikipedia:
 http://en.wikipedia.org/wiki/A*_search_algorithm"
-  (let [number-of-rows (+ 1 (apply max (map :row mapdata)))
-        number-of-columns (+ 1 (apply max (map :column mapdata)))
+  (let [number-of-rows (+ 1 (apply max (block-map :row mapdata)))
+        number-of-columns (+ 1 (apply max (block-map :column mapdata)))
         vecsize (* number-of-columns number-of-rows)
         ; v: convert 1-based (r,c) to vector position
         v (fn [r c] (+ (* number-of-columns r) c))
@@ -201,15 +238,6 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                          (cons x closedset) (rest openset)
                          came-from g-score h-score f-score))))))))))
 
-(defn draw-path [mapdata]
-  "Draw shortest path between two first goals a map"
-  (set-pos-types (let [[start goal & _] (matching-blocks spawn? mapdata)]
-                   (a* start goal
-                       #(all-legal-ground-creep-moves %1 mapdata)
-                       mapdata))
-                 'path
-                 mapdata))
-      
 ;;;; Map IO Functions
 (defn map-file-comment? [str]
   (= \; (first str)))
@@ -236,42 +264,16 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
   
 
 (defn map-from-map-file [file]
-  (apply concat
-         (map (fn [[line-number contents]]
-                (map (fn [[column-number column-type]]
-                       (struct map-block line-number column-number column-type))
-                     contents))
-              (indexed
-               (map indexed
-                    (map #(map map-file-char-to-type %1)
-                         (remove map-file-comment? (read-lines file))))))))
-
-(defn order-map [map]
-  (sort
-   (fn [a b]
-     (let [row-comp (compare (:row a) (:row b))]
-       (if (zero? row-comp)
-         (compare (:column a) (:column b))
-         row-comp)))
-   map))
-
-(defn row-map [map op]
-  "Perform operation OP on each block per row, returning list rows of results"
-  (loop [map (order-map map)
-         row -1
-         currow nil
-         acc '()]
-    (if (empty? map)
-      (if (nil? currow)
-        (reverse acc)
-        (reverse (cons (reverse currow) acc)))
-      (let [[block & map-rest] map
-            chr (op (:type block))]
-        (if (not (= row (:row block)))
-          (recur map-rest (:row block) (list chr) (if (nil? currow)
-                                                    acc
-                                                    (cons (reverse currow) acc)))
-          (recur map-rest (:row block) (cons chr currow) acc))))))
+  (new-map
+   (apply concat
+          (map (fn [[line-number contents]]
+                 (map (fn [[column-number column-type]]
+                        (struct map-block line-number column-number column-type))
+                      contents))
+               (indexed
+                (map indexed
+                     (map #(map map-file-char-to-type %1)
+                          (remove map-file-comment? (read-lines file)))))))))
 
 (defn map-strings [mapdata]
   (map #(apply str %1)
@@ -387,9 +389,23 @@ cmp: (fn [cost-a cost-b] -> boolean"
 (def *simple-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
 (def *simple-map* (map-from-map-file *simple-map-file*))
 
-(defn shortest-creep-path-cost [mapdata]
+(defn a*-shortest-creep-path [mapdata]
   (let [[start finish & _] (matching-blocks spawn? mapdata)]
-    (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata))))
+    (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))
+
+(defn update-map-path [mapinfo]
+  (struct mapdata (:blocks mapinfo) (a*-shortest-creep-path mapinfo)))
+(defn shortest-map-path [mapinfo]
+  (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
+                            (update-map-path mapinfo)
+                            mapinfo)]
+    (:shortest-path mapinfo-with-path)))
+
+(defn draw-path [mapdata]
+  "Draw shortest path between two first goals a map"
+  (set-pos-types (shortest-map-path mapdata)
+                 'path
+                 mapdata))
 
 (defn best-towers-for-creeps [current-map]
   (let [spawns (matching-blocks spawn? current-map)
@@ -398,11 +414,11 @@ cmp: (fn [cost-a cost-b] -> boolean"
     (genetic-search current-map
                     (fn [mapdata] (distinct (apply concat
                                                    (map #(tower-placements-covering-pos %1 mapdata)
-                                                        (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))))
-                    (fn [map pos] (place-tower pos map))
+                                                        (shortest-map-path mapdata)))))
+                    (fn [map pos] (update-map-path (place-tower pos map)))
                     (fn [map pos] (room-for-tower? pos map))
-                    (fn [map] (not (empty? (a* start finish #(all-legal-ground-creep-moves %1 map) map))))
-                    (fn [map] (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 map) map)))
+                    (fn [map] (not (empty? (shortest-map-path map))))
+                    (fn [map] (creep-path-cost (shortest-map-path map)))
                     >)))
 
 (defn analyze-map-file [file]
@@ -411,7 +427,8 @@ cmp: (fn [cost-a cost-b] -> boolean"
     (let [current-map (map-from-map-file file)
           best-towers-map (best-towers-for-creeps current-map)]
       (println)(println)
-      (println "Result cost: " (shortest-creep-path-cost best-towers-map))
+      (println "Result cost: " (shortest-map-path best-towers-map))
       (println (map-to-string (draw-path best-towers-map))))))
 
 ;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
+(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic2.map"))
