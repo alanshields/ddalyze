@@ -295,50 +295,6 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
           (println ln))))))
 
 ;; Search functions
-(defn exhaustive-search [state moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn cmp]
-  "Finds best moves to apply to achieve best cost via exhaustive search
-moves-for-state-fn: (fn [state]) -> list of 
-apply-move-fn: (fn [state move]) -> state
-legal-move?: (fn [state move]) -> bool
-legal-state?: (fn [state]) -> bool
-cost-fn: (fn [state]) -> comparable via cmp
-cmp: (fn [cost-a cost-b] -> boolean"
-  (loop [current-winner state
-         current-winner-cost (cost-fn state)
-         queue (list state)]
-    (println "Q:" (count queue) "C:" current-winner-cost)
-    (if (empty? queue)
-      (do (println "winner:") (println (map-to-string (draw-path current-winner))) current-winner)
-      (let [candidate (first queue)
-            candidate-cost (cost-fn candidate)
-            current-winner (do
-                             (println "COMP:" candidate-cost "v" current-winner-cost)
-                             (print (show-map-compares (draw-path candidate)
-                                                       (draw-path current-winner)))
-                             (println)
-                             (if (cmp candidate-cost current-winner-cost)
-                               candidate
-                               current-winner))
-            current-winner-cost (if (cmp candidate-cost current-winner-cost)
-                                  candidate-cost
-                                  current-winner-cost)]
-        (println "current winner:")
-        (println (map-to-string (draw-path current-winner)))
-        (let [next-moves (moves-for-state-fn candidate)]
-          (if (empty? next-moves)
-            (recur current-winner current-winner-cost
-                   (rest queue))
-            (let [next-states (remove nil?
-                                      (map (fn [move]
-                                             (if (legal-move? candidate move)
-                                               (let [result (apply-move-fn candidate move)]
-                                                 (if (legal-state? result)
-                                                   result))))
-                                           next-moves))]
-              (recur current-winner current-winner-cost
-                     (concat (remove nil? next-states)
-                             (rest queue))))))))))
-
 (defn drop-first
   ([val coll] (drop-first val identity coll))
   ([val keyfn coll]
@@ -375,7 +331,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
   (take n (shuffle coll)))
 
 (defn genetic-search [state moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn cmp]
-  "Finds best moves to apply to achieve best cost via exhaustive search
+  "Finds best moves to apply to achieve best cost via genetic search
 moves-for-state-fn: (fn [state]) -> list of 
 apply-move-fn: (fn [state move]) -> state
 legal-move?: (fn [state move]) -> bool
@@ -439,20 +395,6 @@ cmp: (fn [cost-a cost-b] -> boolean"
   (let [spawns (matching-blocks spawn? current-map)
         start (nth spawns 0)
         finish (nth spawns 1)]
-    (exhaustive-search current-map
-                       (fn [mapdata] (distinct (apply concat
-                                                      (map #(tower-placements-covering-pos %1 mapdata)
-                                                           (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))))
-                       (fn [map pos] (place-tower pos map))
-                       (fn [map pos] (room-for-tower? pos map))
-                       (fn [map] (not (empty? (a* start finish #(all-legal-ground-creep-moves %1 map) map))))
-                       (fn [map] (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 map) map)))
-                       >)))
-
-(defn best-towers-for-creeps* [current-map]
-  (let [spawns (matching-blocks spawn? current-map)
-        start (nth spawns 0)
-        finish (nth spawns 1)]
     (genetic-search current-map
                     (fn [mapdata] (distinct (apply concat
                                                    (map #(tower-placements-covering-pos %1 mapdata)
@@ -464,17 +406,10 @@ cmp: (fn [cost-a cost-b] -> boolean"
                     >)))
 
 (defn analyze-map-file [file]
-  (let [current-map (map-from-map-file file)
-        best-towers-map (best-towers-for-creeps current-map)]
-    (println)(println)
-    (println "Result cost: " (shortest-creep-path-cost best-towers-map))
-    (println (map-to-string (draw-path best-towers-map)))))
-
-(defn analyze-map-file* [file]
   (binding [*debug-output* true
             *ddebug-output* true]
     (let [current-map (map-from-map-file file)
-          best-towers-map (best-towers-for-creeps* current-map)]
+          best-towers-map (best-towers-for-creeps current-map)]
       (println)(println)
       (println "Result cost: " (shortest-creep-path-cost best-towers-map))
       (println (map-to-string (draw-path best-towers-map))))))
