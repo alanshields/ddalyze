@@ -3,7 +3,8 @@
   (:use clojure.core
         [clojure.contrib.duck-streams :only (read-lines write-lines)]
         clojure.contrib.seq-utils
-        clojure.contrib.greatest-least)
+        clojure.contrib.greatest-least
+        [clojure.contrib.combinatorics :only (cartesian-product)])
   (:import (java.io.File)))
 
 (def *debug-output* false)
@@ -29,10 +30,12 @@
 (defn out-of-bounds? [{map-type :type}]
   (= map-type 'out-of-bounds))
 (defn spawn? [{map-type :type}]
-  (= map-type 'spawn))
+  (map-type #{'spawn 'spawnexit}))
+(defn exit? [{map-type :type}]
+  (map-type #{'exit 'spawnexit}))
 (defn creepable? [{map-type :type}]
   "Creep can be on this block?"
-  (map-type #{'playable 'spawn 'path}))
+  (map-type #{'playable 'exit 'path 'spawnexit}))
 
 (defn is-pos [row col block]
   (and (= (:row block) row)
@@ -64,6 +67,7 @@
   (block-at (+ r (:row pos))
             (+ c (:column pos))
             map))
+  
 (defn matching-blocks [pred? map]
   (filter pred? (:blocks map)))
 (defn block-map [fn mapdata]
@@ -109,6 +113,13 @@
         column-distance (- (:column from) (:column to))]
     (Math/sqrt (+ (* row-distance row-distance)
                   (* column-distance column-distance)))))
+
+(defn adjacent?
+  "Next to or on top of
+Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
+  ([pos-a pos-b] (adjacent? pos-a pos-b streetwise-distance))
+  ([pos-a pos-b distance-fn]
+     (>= 1 (distance-fn pos-a pos-b))))
 
 (defn room-for-tower? [pos mapdata]
   (let [b #(block-at-offset pos %1 %2 mapdata)]
@@ -185,12 +196,13 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
         estimated-path-distance (fn [pos] (crow-distance pos goal))]
     (let [f-score (vec (take vecsize (repeat nil)))
           g-score (vec (take vecsize (repeat nil)))
-          h-score (vec (take vecsize (repeat nil)))]
+          h-score (vec (take vecsize (repeat nil)))
+          came-from (vec (take vecsize (repeat nil)))]
       (loop [add-queue '() ; queue of adjacent positions to x (implements the "for next adjacent")
              x nil
              closedset '()
              openset (list from)
-             came-from (vec (take vecsize (repeat nil)))
+             came-from came-from
              g-score (assoc g-score (vp from) 0)
              h-score (assoc h-score (vp from) (estimated-path-distance from))
              f-score (assoc f-score (vp from) (estimated-path-distance from))]
@@ -199,7 +211,7 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                                         accum '()]
                                    (if-let [from (get came-from (vp pos))]
                                      (recur from (cons pos accum))
-                                     accum)))
+                                     (cons pos accum))))
               in-closedset? (fn [pos]
                              (some #(pos= pos %1) closedset))
               in-openset? (fn [pos]
@@ -241,7 +253,9 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
 (def *map-char->-type*
      {\X 'out-of-bounds
       \space 'playable
-      \O 'spawn
+      \I 'spawn
+      \O 'exit
+      \i 'spawnexit
       \a 'path
       \T 'tower})
 (def *map-type->-char*
@@ -304,27 +318,29 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                  (rest queue))
          (recur (cons (first queue) accum)
                 (rest queue))))))
-(defn take-n-greatest-by [n keyfn coll]
-  (if (empty? coll)
-    coll
-    (let [vm (map #(list %1 (keyfn %1)) coll)
-          cost #(second %1)]
-      (loop [top-n (take n vm)
-             lowest (reduce min (map cost top-n))
-             queue (drop n vm)]
-        (if (empty? queue)
-          (map first top-n)
-          (let [[next & queue] queue]
-            (if (> n (count top-n))
-              (recur (cons next top-n)
-                     (min (cost next) lowest)
-                     queue)
-              (if (>= lowest (cost next))
-                (recur top-n lowest queue)
-                (let [top-n (cons next (drop-first lowest cost top-n))]
-                  (recur top-n
-                         (reduce min (map cost top-n))
-                         queue))))))))))
+(defn take-n-greatest-by
+  ([n keyfn coll] (take-n-greatest-by n keyfn > coll))
+  ([n keyfn cmp coll]
+     (if (empty? coll)
+       coll
+       (let [vm (map #(list %1 (keyfn %1)) coll)
+             cost #(second %1)]
+         (loop [top-n (take n vm)
+                lowest (reduce min (map cost top-n))
+                queue (drop n vm)]
+           (if (empty? queue)
+             (map first top-n)
+             (let [[next & queue] queue]
+               (if (> n (count top-n))
+                 (recur (cons next top-n)
+                        (min (cost next) lowest)
+                        queue)
+                 (if (cmp (cost next) lowest)
+                   (let [top-n (cons next (drop-first lowest cost top-n))]
+                     (recur top-n
+                            (reduce min (map cost top-n))
+                            queue))
+                   (recur top-n lowest queue))))))))))
 (defn choose [n coll]
   (take n (shuffle coll)))
 
@@ -386,8 +402,16 @@ cmp: (fn [cost-a cost-b] -> boolean"
 (def *simple-map* (map-from-map-file *simple-map-file*))
 
 (defn a*-shortest-creep-path [mapdata]
-  (let [[start finish & _] (matching-blocks spawn? mapdata)]
-    (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))
+  "Confirm that every spawn can reach every exit, then return the shortest path"
+  (let [spawns (matching-blocks spawn? mapdata)
+        exits (matching-blocks exit? mapdata)
+        path (fn [start finish]
+               (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata))]
+    (let [all-paths (map (fn [[start finish]] (path start finish))
+                         (remove (fn [[a b]] (adjacent? a b))
+                                 (cartesian-product spawns exits)))]
+      (if (every? not-empty all-paths)
+        (first (take-n-greatest-by 1 count all-paths))))))
 (defn creep-path-cost [path]
   "Cost of moving along this path"
   (if (empty? path)
@@ -416,18 +440,15 @@ cmp: (fn [cost-a cost-b] -> boolean"
                  mapdata))
 
 (defn best-towers-for-creeps [current-map]
-  (let [spawns (matching-blocks spawn? current-map)
-        start (nth spawns 0)
-        finish (nth spawns 1)]
-    (genetic-search current-map
-                    (fn [mapdata] (distinct (apply concat
-                                                   (map #(tower-placements-covering-pos %1 mapdata)
-                                                        (shortest-map-path mapdata)))))
-                    (fn [map pos] (update-map-path (place-tower pos map)))
-                    (fn [map pos] (room-for-tower? pos map))
-                    (fn [map] (not (empty? (shortest-map-path map))))
-                    (fn [map] (shortest-map-path-cost map))
-                    >)))
+  (genetic-search current-map
+                  (fn [mapdata] (distinct (apply concat
+                                                 (map #(tower-placements-covering-pos %1 mapdata)
+                                                      (shortest-map-path mapdata)))))
+                  (fn [map pos] (update-map-path (place-tower pos map)))
+                  (fn [map pos] (room-for-tower? pos map))
+                  (fn [map] (not (empty? (shortest-map-path map))))
+                  (fn [map] (shortest-map-path-cost map))
+                  >))
 
 (defn analyze-map-file [file]
   (binding [*debug-output* true
@@ -435,8 +456,8 @@ cmp: (fn [cost-a cost-b] -> boolean"
     (let [current-map (map-from-map-file file)
           best-towers-map (best-towers-for-creeps current-map)]
       (println)(println)
-      (println "Result cost: " (shortest-map-path best-towers-map))
+      (println "Result cost: " (shortest-map-path-cost best-towers-map))
       (println (map-to-string (draw-path best-towers-map))))))
 
 ;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
-;;(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic2.map"))
+;;(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic.map"))
