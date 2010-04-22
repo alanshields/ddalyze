@@ -13,7 +13,7 @@
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
 (defstruct mapdata
-  :blocks :shortest-path :shortest-path-cost)
+  :blocks :row-count :column-count :shortest-path :shortest-path-cost)
 (defstruct map-block
   :row :column :type)
 (defstruct map-pos
@@ -53,8 +53,12 @@
   (= (:type block) type))
 
 ;; Map functions
-(defn new-map [blockdata]
-  (struct mapdata blockdata))
+(defn new-map
+  ([blockdata] (new-map blockdata
+                        (+ 1 (apply max (map :row blockdata)))
+                        (+ 1 (apply max (map :column blockdata)))))
+  ([blockdata row-count column-count]
+     (struct mapdata (vec blockdata) row-count column-count)))
 (defn set-pos-type [pos type mapdata]
   "For pos in the mapdata, set its type to TYPE"
   (new-map (map #(if (pos= pos %1)
@@ -70,8 +74,10 @@
              restpos))))
 
 (defn block-at [row column map]
-  (first (filter #(is-pos row column %1)
-                 (:blocks map))))
+  (let [vecpos (+ (* (:column-count map) row)
+                  column)]
+    (if (contains? (:blocks map) vecpos)
+      (get (:blocks map) vecpos))))
 (defn block-at-offset [pos r c map]
   {:pre [(is-pos? pos)
          (number? r)
@@ -386,15 +392,15 @@ cmp: (fn [cost-a cost-b] -> boolean"
            greatest-fitness (reduce max (map cost-fn most-fit))
            generations-with-this-fitness 1]
       (when *debug-output*
-        (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" greatest-fitness) "count(most-fit)" (count most-fit)))
+        (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" (float greatest-fitness)) "count(most-fit)" (count most-fit)))
       (when *ddebug-output*
         (let [top (take-n-greatest-by 2 cost-fn most-fit)]
           (if (< 1 (count top))
             (let [[a b] top]
-              (println (format "top 2: %.2f vs %.2f" (cost-fn a) (cost-fn b)))
+              (println (format "top 2: %.2f vs %.2f" (float (cost-fn a)) (float (cost-fn b))))
               (println (show-map-compares a b)))
             (do
-              (println (format "top 1: %.2f" (cost-fn (first top))))
+              (println (format "top 1: %.2f" (float (cost-fn (first top)))))
               (println (map-to-string (first top)))))))
       (if (or (>= cur-generation max-generations)
               (>= generations-with-this-fitness max-generations-without-max-fitness-change))
@@ -445,7 +451,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
 
 (defn update-map-path [mapinfo]
   (let [shortest-path (a*-shortest-creep-path mapinfo)]
-    (struct mapdata (:blocks mapinfo) shortest-path (creep-path-cost shortest-path))))
+    (struct mapdata (:blocks mapinfo) (:row-count mapinfo) (:column-count mapinfo) shortest-path (creep-path-cost shortest-path))))
 (defn shortest-map-path [mapinfo]
   (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
                             (update-map-path mapinfo)
@@ -457,11 +463,12 @@ cmp: (fn [cost-a cost-b] -> boolean"
                                  mapinfo)]
     (:shortest-path-cost mapinfo-with-path-cost)))
 
-(defn draw-path [mapdata]
-  "Draw shortest path between two first goals a map"
-  (set-pos-types (shortest-map-path mapdata)
+(defn draw-path [path mapdata]
+  (set-pos-types path
                  'path
                  mapdata))
+(defn draw-shortest-path [mapdata]
+  (draw-path (shortest-map-path mapdata) mapdata))
 
 (defn best-towers-for-creeps [current-map]
   (genetic-search current-map
@@ -481,7 +488,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
           best-towers-map (best-towers-for-creeps current-map)]
       (println)(println)
       (println "Result cost: " (shortest-map-path-cost best-towers-map))
-      (println (map-to-string (draw-path best-towers-map))))))
+      (println (map-to-string (draw-shortest-path best-towers-map))))))
 
 ;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
-;;(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic.map"))
+;;(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic2.map"))
