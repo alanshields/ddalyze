@@ -6,6 +6,7 @@
   (:import (java.io.File)))
 
 (def *debug-output* false)
+(def *ddebug-output* false)
 
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
@@ -354,23 +355,48 @@ cost-fn: (fn [state]) -> comparable via cmp
 cmp: (fn [cost-a cost-b] -> boolean"
   (let [max-generations 100
         descendants-from-each 10
-        number-of-fit-to-keep 20]
+        number-of-fit-to-keep 20
+        max-generations-without-max-fitness-change 5
+        epsilon 0.01]
     (loop [cur-generation 1
-           most-fit (list state)]
-      (if (>= cur-generation max-generations)
+           most-fit (list state)
+           greatest-fitness (reduce max (map cost-fn most-fit))
+           generations-with-this-fitness 1]
+      (when *debug-output*
+        (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" greatest-fitness) "count(most-fit)" (count most-fit)))
+      (when *ddebug-output*
+        (let [top (take-n-greatest-by 2 cost-fn cmp most-fit)]
+          (if (< 1 (count top))
+            (let [[a b] top]
+              (println (format "top 2: %.2f vs %.2f" (cost-fn a) (cost-fn b)))
+              (println (show-map-compares a b)))
+            (do
+              (println (format "top 1: %.2f" (cost-fn (first top))))
+              (println (map-to-string (first top)))))))
+      (if (or (>= cur-generation max-generations)
+              (>= generations-with-this-fitness max-generations-without-max-fitness-change))
         (first (take-n-greatest-by 1 cost-fn cmp most-fit))
-        (recur (inc cur-generation)
-               (take-n-greatest-by number-of-fit-to-keep cost-fn
-                                   (apply concat
-                                          (pmap (fn [state]
-                                                  (cons state
-                                                        (remove nil? (map (fn [move]
-                                                                            (if (legal-move? state move)
-                                                                              (let [result-state (apply-move-fn state move)]
-                                                                                (if (legal-state? result-state)
-                                                                                  result-state))))
-                                                                          (choose descendants-from-each (moves-for-state-fn state))))))
-                                                most-fit))))))))
+        (let [most-fit (take-n-greatest-by number-of-fit-to-keep cost-fn
+                                           (distinct (apply concat
+                                                            (pmap (fn [state]
+                                                                    (cons state
+                                                                          (remove nil? (map (fn [move]
+                                                                                              (if (legal-move? state move)
+                                                                                                (let [result-state (apply-move-fn state move)]
+                                                                                                  (if (legal-state? result-state)
+                                                                                                    result-state))))
+                                                                                            (choose descendants-from-each (moves-for-state-fn state))))))
+                                                                  most-fit))))
+              new-greatest-fitness (reduce max (map cost-fn most-fit))]
+          (recur (inc cur-generation)
+                 most-fit
+                 new-greatest-fitness
+                 (if (< (Math/abs (- new-greatest-fitness greatest-fitness))
+                        epsilon)
+                   (inc generations-with-this-fitness)
+                   1)))))))
+                 
+               
       
 
 (def *simple-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
@@ -412,14 +438,16 @@ cmp: (fn [cost-a cost-b] -> boolean"
   (let [current-map (map-from-map-file file)
         best-towers-map (best-towers-for-creeps current-map)]
     (println)(println)
-    (println "Result cost: " (shortest-creep-path-cost current-map))
+    (println "Result cost: " (shortest-creep-path-cost best-towers-map))
     (println (map-to-string (draw-path best-towers-map)))))
 
 (defn analyze-map-file* [file]
-  (let [current-map (map-from-map-file file)
-        best-towers-map (best-towers-for-creeps* current-map)]
-    (println)(println)
-    (println "Result cost: " (shortest-creep-path-cost current-map))
-    (println (map-to-string (draw-path best-towers-map)))))
+  (binding [*debug-output* true
+            *ddebug-output* true]
+    (let [current-map (map-from-map-file file)
+          best-towers-map (best-towers-for-creeps* current-map)]
+      (println)(println)
+      (println "Result cost: " (shortest-creep-path-cost best-towers-map))
+      (println (map-to-string (draw-path best-towers-map))))))
 
 ;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
