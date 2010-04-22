@@ -5,6 +5,8 @@
         clojure.contrib.seq-utils)
   (:import (java.io.File)))
 
+(def *debug-output* false)
+
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
 (defstruct map-block
@@ -45,20 +47,6 @@
       mapdata
       (recur (set-pos-type curpos type mapdata)
              restpos))))
-(defn room-for-tower? [pos mapdata]
-  (let [b #(block-at-offset pos %1 %2 mapdata)]
-    (every? playable? (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)))))
-(defn place-tower
-  "Will fail only if there is no room for the tower - tower will be allowed to block the path"
-  ([pos mapdata] (let [result (place-tower pos mapdata 'fail)]
-                   (if (= result 'fail)
-                     (throw (Exception. (format "Could not place tower at %s" pos)))
-                     result)))
-  ([pos mapdata on-fail]
-     (let [b #(block-at-offset pos %1 %2 mapdata)]
-       (if (room-for-tower? pos mapdata)
-         (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
-         on-fail))))
 
 ; More interesting questions about maps
 (defn block-at [row column map]
@@ -86,6 +74,27 @@
   "Cost of moving along this path"
   (reduce +
           (map #(crow-distance %1 %2) path (rest path))))
+
+(defn room-for-tower? [pos mapdata]
+  (let [b #(block-at-offset pos %1 %2 mapdata)]
+    (every? playable? (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)))))
+(defn place-tower
+  "Will fail only if there is no room for the tower - tower will be allowed to block the path"
+  ([pos mapdata] (let [result (place-tower pos mapdata 'fail)]
+                   (if (= result 'fail)
+                     (throw (Exception. (format "Could not place tower at %s" pos)))
+                     result)))
+  ([pos mapdata on-fail]
+     (let [b #(block-at-offset pos %1 %2 mapdata)]
+       (if (room-for-tower? pos mapdata)
+         (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
+         on-fail))))
+(defn tower-placements-covering-pos [pos mapdata]
+  "Returns a list of legal tower placements that covers position pos"
+  (let [possible-moves (map #(let [[r c] %1]
+                               (block-at-offset pos r c mapdata))
+                            '((0 0) (-1 0) (0 -1) (-1 -1)))]
+    (filter #(room-for-tower? %1 mapdata) possible-moves)))
 
 (defn blocks-within-distance
   ([pos distance map] (blocks-within-distance pos distance map crow-distance))
@@ -132,8 +141,8 @@ h is estimated future path-cost
 
 Uses terminology and pseudocode from Wikipedia:
 http://en.wikipedia.org/wiki/A*_search_algorithm"
-  (let [number-of-rows (+ 1 (reduce max (map :row mapdata)))
-        number-of-columns (+ 1 (reduce max (map :column mapdata)))
+  (let [number-of-rows (+ 1 (apply max (map :row mapdata)))
+        number-of-columns (+ 1 (apply max (map :column mapdata)))
         vecsize (* number-of-columns number-of-rows)
         ; v: convert 1-based (r,c) to vector position
         v (fn [r c] (+ (* number-of-columns r) c))
@@ -262,113 +271,142 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                                                     (cons (reverse currow) acc)))
           (recur map-rest (:row block) (cons chr currow) acc))))))
 
+(defn map-strings [mapdata]
+  (map #(apply str %1)
+       (row-map mapdata map-type-to-file-char)))
 (defn map-to-string [mapdata]
-  (let [lines (map #(apply str %1)
-                   (row-map mapdata map-type-to-file-char))]
+  (let [lines (map-strings mapdata)]
     (apply str (interpose "\n" lines))))
 
 (defn map-to-map-file [file mapdata]
   (write-lines file
-               (map #(apply str %1)
-                    (row-map mapdata map-type-to-file-char))))
+               (map-strings mapdata)))
+
+(defn show-map-compares [map-a map-b]
+  (with-out-str
+    (let [map-a-strings (map-strings map-a)
+          map-b-strings (map-strings map-b)]
+      (do
+        (println (first map-a-strings) "  vs  " (first map-b-strings))
+        (doseq [ln (map #(str %1 "        " %2)
+                        (rest map-a-strings) (rest map-b-strings))]
+          (println ln))))))
 
 ;; Search functions
-(defn exhaustive-search [state moves apply-move-fn legal-move? legal-state? cost-fn cmp]
+(defn exhaustive-search [state moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn cmp]
   "Finds best moves to apply to achieve best cost via exhaustive search
+moves-for-state-fn: (fn [state]) -> list of 
 apply-move-fn: (fn [state move]) -> state
 legal-move?: (fn [state move]) -> bool
 legal-state?: (fn [state]) -> bool
 cost-fn: (fn [state]) -> comparable via cmp
 cmp: (fn [cost-a cost-b] -> boolean"
-  (let [make-statemove (fn [state moves-remaining] (list state moves-remaining))
-        get-state (fn [statemove] (nth statemove 0))
-        get-moves-remaining (fn [statemove] (nth statemove 1))]
-    (loop [current-winner state
-           current-winner-cost (cost-fn state)
-           queue (list (make-statemove state moves))]
-      (println "Q:" (count queue) "C:" current-winner-cost)
-      (if (empty? queue)
-        (do (println "winner:") (println (map-to-string (draw-path current-winner))) current-winner)
-        (let [candidate (first queue)
-              candidate-cost (cost-fn (get-state candidate))
-              current-winner (do
-                               (println "COMP:" candidate-cost "v" current-winner-cost)
-                               (println (map-to-string (draw-path (get-state candidate))))
-                               (println)
-                               (println "  vs  ")
-                               (println)
-                               (println (map-to-string (draw-path current-winner)))
-                               (println)
-                               (if (cmp candidate-cost current-winner-cost)
-                                 (get-state candidate)
-                                 current-winner))
-              current-winner-cost (if (cmp candidate-cost current-winner-cost)
-                                    candidate-cost
-                                    current-winner-cost)]
-          (println "current winner:")
-          (println (map-to-string (draw-path current-winner)))
-          (println "queue length:" (count queue))
-          (if (empty? (get-moves-remaining candidate))
+  (loop [current-winner state
+         current-winner-cost (cost-fn state)
+         queue (list state)]
+    (println "Q:" (count queue) "C:" current-winner-cost)
+    (if (empty? queue)
+      (do (println "winner:") (println (map-to-string (draw-path current-winner))) current-winner)
+      (let [candidate (first queue)
+            candidate-cost (cost-fn candidate)
+            current-winner (do
+                             (println "COMP:" candidate-cost "v" current-winner-cost)
+                             (print (show-map-compares (draw-path candidate)
+                                                       (draw-path current-winner)))
+                             (println)
+                             (if (cmp candidate-cost current-winner-cost)
+                               candidate
+                               current-winner))
+            current-winner-cost (if (cmp candidate-cost current-winner-cost)
+                                  candidate-cost
+                                  current-winner-cost)]
+        (println "current winner:")
+        (println (map-to-string (draw-path current-winner)))
+        (let [next-moves (moves-for-state-fn candidate)]
+          (if (empty? next-moves)
             (recur current-winner current-winner-cost
                    (rest queue))
-            (recur current-winner current-winner-cost
-                   (concat (remove nil? (map (fn [move]
-                                               (if (legal-move? (get-state candidate) move)
-                                                 (let [result (apply-move-fn (get-state candidate) move)]
-                                                   (if (legal-state? result)
-                                                     (make-statemove result
-                                                                     (remove #(= move %1)
-                                                                             (get-moves-remaining candidate)))))))
-                                             (get-moves-remaining candidate)))
-                           (rest queue)))))))))
+            (let [next-states (remove nil?
+                                      (map (fn [move]
+                                             (if (legal-move? candidate move)
+                                               (let [result (apply-move-fn candidate move)]
+                                                 (if (legal-state? result)
+                                                   result))))
+                                           next-moves))]
+              (recur current-winner current-winner-cost
+                     (concat (remove nil? next-states)
+                             (rest queue))))))))))
 
+(defn take-n-greatest-by
+  ([n keyfn coll] (take-n-greatest-by n keyfn > coll))
+  ([n keyfn cmp coll]
+     (take n (sort-by keyfn cmp coll))))
+(defn choose [n coll]
+  (take n (shuffle coll)))
+
+(defn genetic-search [state moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn cmp]
+  "Finds best moves to apply to achieve best cost via exhaustive search
+moves-for-state-fn: (fn [state]) -> list of 
+apply-move-fn: (fn [state move]) -> state
+legal-move?: (fn [state move]) -> bool
+legal-state?: (fn [state]) -> bool
+cost-fn: (fn [state]) -> comparable via cmp
+cmp: (fn [cost-a cost-b] -> boolean"
+  (let [max-generations 100
+        descendants-from-each 10
+        number-of-fit-to-keep 20]
+    (loop [cur-generation 1
+           most-fit (list state)]
+      (if (>= cur-generation max-generations)
+        (first (take-n-greatest-by 1 cost-fn cmp most-fit))
+        (recur (inc cur-generation)
+               (take-n-greatest-by number-of-fit-to-keep cost-fn
+                                   (apply concat
+                                          (pmap (fn [state]
+                                                  (cons state
+                                                        (remove nil? (map (fn [move]
+                                                                            (if (legal-move? state move)
+                                                                              (let [result-state (apply-move-fn state move)]
+                                                                                (if (legal-state? result-state)
+                                                                                  result-state))))
+                                                                          (choose descendants-from-each (moves-for-state-fn state))))))
+                                                most-fit))))))))
+      
 
 (def *simple-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
 (def *simple-map* (map-from-map-file *simple-map-file*))
-
-;; (time (let [current-map (map-from-map-file *simple-map-file*)]
-;;         (let [current-map (place-tower (struct map-pos 1 1) current-map)]
-;;           (map-to-map-file "/Users/alanshields/tmp.map"
-;;                            (set-pos-types
-;;                             (a* (first (filter spawn? current-map))
-;;                                 (nth (filter spawn? current-map) 1)
-;;                                 #(all-legal-ground-creep-moves %1 current-map)
-;;                                 current-map)
-;;                             'path
-;;                             current-map)))))
-
-;; (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")
-;;       goals (filter spawn? current-map)]
-;;   (a* (nth goals 0) (nth goals 1) #(all-legal-ground-creep-moves %1 current-map) current-map))
-;; (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/basic.map")
-;;       goals (filter spawn? current-map)]
-;;   (a* (nth goals 0) (nth goals 1) #(all-legal-ground-creep-moves %1 current-map) current-map))
-
-;; (time (let [current-map (map-from-map-file "/Users/alanshields/code/desktop_defender/maps/week1.map")]
-;;         (map-to-map-file "/Users/alanshields/tmp.map"
-;;                          (set-pos-types
-;;                           (a* (first (filter spawn? current-map))
-;;                               (nth (filter spawn? current-map) 1)
-;;                               #(all-legal-ground-creep-moves %1 current-map)
-;;                               current-map)
-;;                           'path
-;;                           current-map))))
 
 (defn shortest-creep-path-cost [mapdata]
   (let [[start finish & _] (matching-blocks spawn? mapdata)]
     (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata))))
 
 (defn best-towers-for-creeps [current-map]
-  (let [spawns (filter spawn? current-map)
+  (let [spawns (matching-blocks spawn? current-map)
         start (nth spawns 0)
         finish (nth spawns 1)]
     (exhaustive-search current-map
-                       (filter playable? current-map)
+                       (fn [mapdata] (distinct (apply concat
+                                                      (map #(tower-placements-covering-pos %1 mapdata)
+                                                           (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))))
                        (fn [map pos] (place-tower pos map))
                        (fn [map pos] (room-for-tower? pos map))
                        (fn [map] (not (empty? (a* start finish #(all-legal-ground-creep-moves %1 map) map))))
                        (fn [map] (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 map) map)))
                        >)))
+
+(defn best-towers-for-creeps* [current-map]
+  (let [spawns (matching-blocks spawn? current-map)
+        start (nth spawns 0)
+        finish (nth spawns 1)]
+    (genetic-search current-map
+                    (fn [mapdata] (distinct (apply concat
+                                                   (map #(tower-placements-covering-pos %1 mapdata)
+                                                        (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata)))))
+                    (fn [map pos] (place-tower pos map))
+                    (fn [map pos] (room-for-tower? pos map))
+                    (fn [map] (not (empty? (a* start finish #(all-legal-ground-creep-moves %1 map) map))))
+                    (fn [map] (creep-path-cost (a* start finish #(all-legal-ground-creep-moves %1 map) map)))
+                    >)))
 
 (defn analyze-map-file [file]
   (let [current-map (map-from-map-file file)
@@ -376,3 +414,12 @@ cmp: (fn [cost-a cost-b] -> boolean"
     (println)(println)
     (println "Result cost: " (shortest-creep-path-cost current-map))
     (println (map-to-string (draw-path best-towers-map)))))
+
+(defn analyze-map-file* [file]
+  (let [current-map (map-from-map-file file)
+        best-towers-map (best-towers-for-creeps* current-map)]
+    (println)(println)
+    (println "Result cost: " (shortest-creep-path-cost current-map))
+    (println (map-to-string (draw-path best-towers-map)))))
+
+;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
