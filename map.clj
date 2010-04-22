@@ -2,7 +2,8 @@
   "Namespace for DDalyze"
   (:use clojure.core
         [clojure.contrib.duck-streams :only (read-lines write-lines)]
-        clojure.contrib.seq-utils)
+        clojure.contrib.seq-utils
+        clojure.contrib.greatest-least)
   (:import (java.io.File)))
 
 (def *debug-output* false)
@@ -338,10 +339,38 @@ cmp: (fn [cost-a cost-b] -> boolean"
                      (concat (remove nil? next-states)
                              (rest queue))))))))))
 
-(defn take-n-greatest-by
-  ([n keyfn coll] (take-n-greatest-by n keyfn > coll))
-  ([n keyfn cmp coll]
-     (take n (sort-by keyfn cmp coll))))
+(defn drop-first
+  ([val coll] (drop-first val identity coll))
+  ([val keyfn coll]
+     (loop [accum '()
+            queue coll]
+       (if (or (empty? queue)
+               (= val (keyfn (first queue))))
+         (concat (reverse accum)
+                 (rest queue))
+         (recur (cons (first queue) accum)
+                (rest queue))))))
+(defn take-n-greatest-by [n keyfn coll]
+  (if (empty? coll)
+    coll
+    (let [vm (map #(list %1 (keyfn %1)) coll)
+          cost #(second %1)]
+      (loop [top-n (take n vm)
+             lowest (reduce min (map cost top-n))
+             queue (drop n vm)]
+        (if (empty? queue)
+          (map first top-n)
+          (let [[next & queue] queue]
+            (if (> n (count top-n))
+              (recur (cons next top-n)
+                     (min (cost next) lowest)
+                     queue)
+              (if (>= lowest (cost next))
+                (recur top-n lowest queue)
+                (let [top-n (cons next (drop-first lowest cost top-n))]
+                  (recur top-n
+                         (reduce min (map cost top-n))
+                         queue))))))))))
 (defn choose [n coll]
   (take n (shuffle coll)))
 
@@ -365,7 +394,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
       (when *debug-output*
         (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" greatest-fitness) "count(most-fit)" (count most-fit)))
       (when *ddebug-output*
-        (let [top (take-n-greatest-by 2 cost-fn cmp most-fit)]
+        (let [top (take-n-greatest-by 2 cost-fn most-fit)]
           (if (< 1 (count top))
             (let [[a b] top]
               (println (format "top 2: %.2f vs %.2f" (cost-fn a) (cost-fn b)))
@@ -375,7 +404,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
               (println (map-to-string (first top)))))))
       (if (or (>= cur-generation max-generations)
               (>= generations-with-this-fitness max-generations-without-max-fitness-change))
-        (first (take-n-greatest-by 1 cost-fn cmp most-fit))
+        (first (take-n-greatest-by 1 cost-fn most-fit))
         (let [most-fit (take-n-greatest-by number-of-fit-to-keep cost-fn
                                            (distinct (apply concat
                                                             (pmap (fn [state]
