@@ -63,7 +63,7 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
       (loop [add-queue '() ; queue of adjacent positions to x (implements the "for next adjacent")
              x nil
              closedset #{}
-             openset (list from)
+             openset #{(pos-id from mapdata)}
              came-from came-from
              g-score (assoc! g-score (vp from) 0)
              h-score (assoc! h-score (vp from) (estimated-path-distance from))
@@ -77,7 +77,7 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
               in-closedset? (fn [pos]
                               (contains? closedset (pos-id pos mapdata)))
               in-openset? (fn [pos]
-                            (some #(pos= pos %1) openset))]
+                            (contains? openset (pos-id pos mapdata)))]
           (if (not (empty? add-queue))
             (let [y (first add-queue)]
               (if (in-closedset? y)
@@ -88,9 +88,7 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                           (< tentative-g-score (get g-score (vp y))))
                     (recur (rest add-queue) x
                            closedset
-                           (if (in-openset? y)
-                             openset
-                             (cons y openset))
+                           (conj openset (pos-id y mapdata))
                            (assoc! came-from (vp y) x)
                            (assoc! g-score (vp y) tentative-g-score)
                            (assoc! h-score (vp y) (estimated-path-distance y))
@@ -100,12 +98,13 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
             ; generate next add-queue
             (if (empty? openset)
               nil
-              (let [openset (sort-by #(f-score (vp %1)) openset)
-                    x (first openset)]
+              (let [x (block-at (first (sort-by #(f-score %1) openset)) mapdata)]
                 (if (pos= x goal)
                   (reconstruct-path x)
-                  (recur (legal-moves-for-pos-fn x) x
-                         (conj closedset (pos-id x mapdata)) (rest openset)
+                  (recur (legal-moves-for-pos-fn x)
+                         x
+                         (conj closedset (pos-id x mapdata))
+                         (disj openset (pos-id x mapdata))
                          came-from g-score h-score f-score))))))))))
 
 (defn genetic-search [state moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn cmp]
