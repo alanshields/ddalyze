@@ -170,6 +170,16 @@ cmp: (fn [cost-a cost-b] -> boolean"
                                   (cartesian-product spawns exits)))]
       (if (every? not-empty all-paths)
         (first (take-n-greatest-by 1 count < all-paths))))))
+
+(defn update-map-path [mapinfo]
+  (let [shortest-path (a*-shortest-creep-path mapinfo)]
+    (struct mapdata (:blocks mapinfo) (:row-count mapinfo) (:column-count mapinfo) shortest-path (creep-path-cost shortest-path) (:towers mapinfo))))
+(defn shortest-map-path [mapinfo]
+  (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
+                            (update-map-path mapinfo)
+                            mapinfo)]
+    (:shortest-path mapinfo-with-path)))
+
 (defn creep-path-cost [path]
   "Cost of moving along this path"
   (if (empty? path)
@@ -177,14 +187,6 @@ cmp: (fn [cost-a cost-b] -> boolean"
     (reduce +
             (map #(crow-distance %1 %2) path (rest path)))))
 
-(defn update-map-path [mapinfo]
-  (let [shortest-path (a*-shortest-creep-path mapinfo)]
-    (struct mapdata (:blocks mapinfo) (:row-count mapinfo) (:column-count mapinfo) shortest-path (creep-path-cost shortest-path))))
-(defn shortest-map-path [mapinfo]
-  (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
-                            (update-map-path mapinfo)
-                            mapinfo)]
-    (:shortest-path mapinfo-with-path)))
 (defn shortest-map-path-cost [mapinfo]
   (let [mapinfo-with-path-cost (if (nil? (:shortest-path-cost mapinfo))
                                  (update-map-path mapinfo)
