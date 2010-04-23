@@ -65,11 +65,10 @@ Can also be used to do a fast lookup on a position via block-at"
 
 (defn set-pos-type [pos type mapdata]
   "For pos in the mapdata, set its type to TYPE"
-  (new-map (map #(if (pos= pos %1)
-                   (struct map-block (:row %1) (:column %1) type)
-                   %1)
-                (:blocks mapdata))
-           mapdata))
+  (let [pid (pos-id pos mapdata)
+        old-block (get (:blocks mapdata) pid)]
+    (new-map (assoc (:blocks mapdata) pid (assoc old-block :type type))
+             mapdata)))
 (defn set-pos-types [poss type mapdata]
   (loop [mapdata mapdata
          [curpos & restpos :as poss] poss]
