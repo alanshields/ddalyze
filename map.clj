@@ -2,13 +2,13 @@
   "Namespace for DDalyze"
   (:use clojure.core
         [clojure.contrib.duck-streams :only (read-lines write-lines)]
-        clojure.contrib.seq-utils
+        [clojure.contrib.seq-utils :only (shuffle partition-all indexed)]
         clojure.contrib.greatest-least
         [clojure.contrib.combinatorics :only (cartesian-product)])
   (:import (java.io.File)))
 
-(def *debug-output* false)
-(def *ddebug-output* false)
+(def *debug-output* true)
+(def *ddebug-output* true)
 
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
@@ -379,6 +379,18 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                             (reduce min (map cost top-n))
                             queue))
                    (recur top-n lowest queue))))))))))
+(defn ptake-n-greatest-by
+  "Parallel take-n-greatest-by"
+  ([n keyfn coll] (ptake-n-greatest-by n keyfn > coll))
+  ([n keyfn cmp coll]
+     (if (> 4 n)
+       (take-n-greatest-by n keyfn cmp coll) ; if it's fewer than 4 n, it's just not worth it.
+       (let [coll-size (count coll)
+             partition-size (int (/ coll-size 2))]
+         (take-n-greatest-by n keyfn cmp
+                             (reduce concat
+                                     (pmap #(take-n-greatest-by n keyfn cmp %1)
+                                           (partition-all partition-size coll))))))))
 (defn choose [n coll]
   (take n (shuffle coll)))
 
@@ -413,9 +425,9 @@ cmp: (fn [cost-a cost-b] -> boolean"
       (if (or (>= cur-generation max-generations)
               (>= generations-with-this-fitness max-generations-without-max-fitness-change))
         (first (take-n-greatest-by 1 cost-fn most-fit))
-        (let [most-fit (take-n-greatest-by number-of-fit-to-keep cost-fn
-                                           (distinct (apply concat
-                                                            (pmap (fn [state]
+        (let [most-fit (ptake-n-greatest-by number-of-fit-to-keep cost-fn
+                                            (distinct (apply concat
+                                                             (map (fn [state]
                                                                     (cons state
                                                                           (remove nil? (map (fn [move]
                                                                                               (if (legal-move? state move)
@@ -445,9 +457,9 @@ cmp: (fn [cost-a cost-b] -> boolean"
         exits (matching-blocks exit? mapdata)
         path (fn [start finish]
                (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata))]
-    (let [all-paths (map (fn [[start finish]] (path start finish))
-                         (remove (fn [[a b]] (adjacent? a b))
-                                 (cartesian-product spawns exits)))]
+    (let [all-paths (pmap (fn [[start finish]] (path start finish))
+                          (remove (fn [[a b]] (adjacent? a b))
+                                  (cartesian-product spawns exits)))]
       (if (every? not-empty all-paths)
         (first (take-n-greatest-by 1 count < all-paths))))))
 (defn creep-path-cost [path]
@@ -490,13 +502,12 @@ cmp: (fn [cost-a cost-b] -> boolean"
                   >))
 
 (defn analyze-map-file [file]
-  (binding [*debug-output* true
-            *ddebug-output* true]
-    (let [current-map (map-from-map-file file)
-          best-towers-map (best-towers-for-creeps current-map)]
+  (let [current-map (map-from-map-file file)
+        best-towers-map (best-towers-for-creeps current-map)]
+    (when *debug-output*
       (println)(println)
       (println "Result cost: " (shortest-map-path-cost best-towers-map))
-      (println (map-to-string (draw-shortest-path best-towers-map))))))
+      (println (show-map-compares (draw-shortest-path best-towers-map) best-towers-map)))))
 
 ;;(analyze-map-file* "/Users/alanshields/code/desktop_defender/maps/basic.map")
 ;;(time (analyze-map-file "/Users/alanshields/code/desktop_defender/maps/basic2.map"))
