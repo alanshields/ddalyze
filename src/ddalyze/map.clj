@@ -27,17 +27,16 @@
   (and (= (:row a) (:row b))
        (= (:column a) (:column b))))
 
-(defn playable? [{map-type :type}]
-  (= map-type 'playable))
-(defn out-of-bounds? [{map-type :type}]
-  (= map-type 'out-of-bounds))
-(defn spawn? [{map-type :type}]
-  (map-type #{'spawn 'spawnexit}))
-(defn exit? [{map-type :type}]
-  (map-type #{'exit 'spawnexit}))
-(defn creepable? [{map-type :type}]
-  "Creep can be on this block?"
-  (map-type #{'playable 'exit 'path 'spawnexit}))
+(defmacro defmap-type-match [pred-name matching-types]
+  `(let [match-set# (apply hash-set ~matching-types)]
+     (defn ~pred-name [{map-type# :type}]
+       (map-type# match-set#))))
+
+(defmap-type-match playable? '(playable))
+(defmap-type-match out-of-bounds? '(out-of-bounds))
+(defmap-type-match spawn? '(spawn spawnexit))
+(defmap-type-match exit? '(exit spawnexit))
+(defmap-type-match creepable? '(playable exit path spawnexit))
 
 (defn is-pos [row col block]
   (and (= (:row block) row)
