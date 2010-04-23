@@ -198,25 +198,26 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
           u  (offset-block 1 0)
           r  (offset-block 0 1)
           d  (offset-block -1 0)
-          l  (offset-block 0 -1)]
+          l  (offset-block 0 -1)
+          u? (creep-or-nil u)
+          r? (creep-or-nil r)
+          d? (creep-or-nil d)
+          l? (creep-or-nil l)]
       (filter creepable?
               (remove nil?
                       (list u
                             r
                             d
                             l
-                            (if (and (creep-or-nil u)
-                                     (creep-or-nil r))
+                            (if (and u? r?)
                               ur)
-                            (if (and (creep-or-nil r)
-                                     (creep-or-nil d))
+                            (if (and r? d?)
                               lr)
-                            (if (and (creep-or-nil d)
-                                     (creep-or-nil l))
+                            (if (and d? l?)
                               ll)
-                            (if (and (creep-or-nil l)
-                                     (creep-or-nil u))
+                            (if (and l? u?)
                               ul)))))))
+
 
 (defn a* [from goal legal-moves-for-pos-fn mapdata]
   "f(x) = g(x) + h(x)
