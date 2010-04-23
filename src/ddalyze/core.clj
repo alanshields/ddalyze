@@ -18,4 +18,3 @@
       (println "Result cost: " (shortest-map-path-cost best-towers-map))
       (println (show-map-compares (draw-shortest-path best-towers-map) best-towers-map)))))
 
-
