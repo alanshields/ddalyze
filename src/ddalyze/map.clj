@@ -12,6 +12,18 @@
 (defstruct map-pos
   :row :column)
 
+; range is in blocks, not towers!
+(def *towers*
+     (hash-map 'pellet {:name 'pellet :range 4 :damage 5 :attacks-per-second 1 :price 5}
+               'squirt {:name 'squirt :range 5 :damage 10 :attacks-per-second 2 :price 15}))
+(defn possible-tower-types []
+  (keys *towers*))
+(defn towers-at-price [d]
+  "At or BELOW price"
+  (filter #(>= d (:price %1)) (vals *towers*)))
+(defn get-tower [tower-type]
+  (get *towers* tower-type))
+
 (defn is-pos? [p]
   (and (:row p)
        (:column p)))
@@ -20,6 +32,15 @@
 (defn is-map-block? [b]
   (and (is-pos? b)
        (:type b)))
+(defn is-tower? [t]
+  (and (:name t)
+       (:range t)
+       (:damage t)
+       (:attacks-per-second t)
+       (:price t)))
+(defn is-placed-tower? [t]
+  (and (is-tower? t)
+       (:position t)))
 
 ;; Block functions
 (defn pos= [a b]
@@ -82,19 +103,25 @@ Can also be used to do a fast lookup on a position via block-at"
   ([pos-id map]
      (if (contains? (:blocks map) pos-id)
        (get (:blocks map) pos-id))))
+(defn pos-offset [pos r c]
+  (new-pos (+ r (:row pos))
+           (+ c (:column pos))))
 (defn block-at-offset [pos r c map]
   {:pre [(is-pos? pos)
          (number? r)
          (number? c)
          (is-map? map)]}
-  (block-at (+ r (:row pos))
-            (+ c (:column pos))
-            map))
+  (block-at (pos-id (pos-offset pos r c) map) map))
   
 (defn matching-blocks [pred? map]
   (filter pred? (:blocks map)))
 (defn block-map [fn mapdata]
   (map fn (:blocks mapdata)))
+
+(defn map-towers [mapdata]
+  (:towers mapdata))
+(defn map-price [mapdata]
+  (reduce + (map :cost (map-towers mapdata))))
 
 (defn order-map [map]
   (new-map 
@@ -151,18 +178,36 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
     (every? #(and (not (nil? %1))
                   (playable? %1))
             (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)))))
+(defn tower-with-position [tower pos]
+  (assoc tower :position pos))
+(defn tower-position [tower]
+  (:position tower))
+(defn pos-to-tower-center [pos]
+  (pos-offset pos 0.5 0.5))
+(defn tower-center-position [tower]
+  (pos-to-tower-center (tower-position tower)))
+(defn tower-range [tower]
+  (:range tower))
+(defn tower-damage [tower]
+  (:damage tower))
 (defn place-tower
   "Will fail only if there is no room for the tower - tower will be allowed to block the path"
-  ([pos mapdata] (let [result (place-tower pos mapdata 'fail)]
-                   (if (= result 'fail)
-                     (throw (Exception. (format "Could not place tower at %s" pos)))
-                     result)))
-  ([pos mapdata on-fail]
+  ([pos tower mapdata]
+     {:pre [(is-pos? pos)
+            (is-map? mapdata)
+            (is-tower? tower)]}
+     (let [result (place-tower pos tower mapdata 'fail)]
+       (if (= result 'fail)
+         (throw (Exception. (format "Could not place tower at %s" pos)))
+         result)))
+  ([pos tower mapdata on-fail]
      {:pre [(is-pos? pos)
             (is-map? mapdata)]}
      (let [b #(block-at-offset pos %1 %2 mapdata)]
        (if (room-for-tower? pos mapdata)
-         (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
+         (let [newmap (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
+               current-towers (:towers newmap)]
+           (assoc newmap :towers (cons (tower-with-position tower pos) current-towers)))
          on-fail))))
 (defn tower-placements-covering-pos [pos mapdata]
   "Returns a list of legal tower placements that covers position pos"
@@ -175,6 +220,14 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
     (filter #(and (not (nil? %1))
                   (room-for-tower? %1 mapdata))
             possible-moves)))
+(defn tower-placements-reaching-pos [pos tower mapdata]
+  "Returns a list of legal tower placements that would be in range of pos"
+  (filter #(room-for-tower? %1 mapdata)
+          (blocks-within-distance (pos-to-tower-center pos) (tower-range tower) mapdata)))
+(defn towers-within-range [pos mapdata]
+  "Returns a list of towers that can hit pos"
+  (filter #(>= (tower-range %1) (crow-distance pos (tower-center-position %1)))
+          (map-towers mapdata)))
 
 (defn blocks-within-distance
   ([pos distance map] (blocks-within-distance pos distance map crow-distance))

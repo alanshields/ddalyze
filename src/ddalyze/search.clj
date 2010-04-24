@@ -7,6 +7,7 @@
         ddalyze.util
         ddalyze.parse))
 
+
 (defn all-legal-ground-creep-moves [pos map]
   (let [offset-block (fn [r c]
                        (block-at-offset pos r c map))
@@ -117,7 +118,7 @@ cost-fn: (fn [state]) -> comparable via cmp
 cmp: (fn [cost-a cost-b] -> boolean"
   (let [max-generations 100
         descendants-from-each 10
-        number-of-fit-to-keep 20
+        number-of-fit-to-keep 30
         max-generations-without-max-fitness-change 5
         epsilon 0.01]
     (loop [cur-generation 1
@@ -170,21 +171,27 @@ cmp: (fn [cost-a cost-b] -> boolean"
       (if (every? not-empty all-paths)
         (first (take-n-greatest-by 1 count < all-paths))))))
 
+(defn creep-path-cost [path mapdata]
+  "Cost of moving along this path"
+  (if (empty? path)
+    0
+    (reduce +
+            (map (fn [towers]
+                   (reduce + (map tower-damage towers)))
+                 (map (fn [pos]
+                        (towers-within-range pos mapdata))
+                      path)))))
+
 (defn update-map-path [mapinfo]
   (let [shortest-path (a*-shortest-creep-path mapinfo)]
-    (struct mapdata (:blocks mapinfo) (:row-count mapinfo) (:column-count mapinfo) shortest-path (creep-path-cost shortest-path) (:towers mapinfo))))
+    (struct mapdata (:blocks mapinfo) (:row-count mapinfo) (:column-count mapinfo) shortest-path (creep-path-cost shortest-path mapinfo) (:towers mapinfo))))
 (defn shortest-map-path [mapinfo]
   (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
                             (update-map-path mapinfo)
                             mapinfo)]
     (:shortest-path mapinfo-with-path)))
 
-(defn creep-path-cost [path]
-  "Cost of moving along this path"
-  (if (empty? path)
-    0
-    (reduce +
-            (map #(crow-distance %1 %2) path (rest path)))))
+
 
 (defn shortest-map-path-cost [mapinfo]
   (let [mapinfo-with-path-cost (if (nil? (:shortest-path-cost mapinfo))
@@ -198,9 +205,20 @@ cmp: (fn [cost-a cost-b] -> boolean"
 (defn best-towers-for-creeps [current-map]
   (genetic-search current-map
                   (fn [mapdata] (distinct (apply concat
+                                                 (map #(tower-placements-reaching-pos %1 (get-tower 'pellet) mapdata)
+                                                      (shortest-map-path mapdata)))))
+                  (fn [map pos] (update-map-path (place-tower pos (get-tower 'pellet) map)))
+                  (fn [map pos] (room-for-tower? pos map))
+                  (fn [map] (not (empty? (shortest-map-path map))))
+                  (fn [map] (shortest-map-path-cost map))
+                  >))
+
+(defn best-towers-for-longest-path [current-map]
+  (genetic-search current-map
+                  (fn [mapdata] (distinct (apply concat
                                                  (map #(tower-placements-covering-pos %1 mapdata)
                                                       (shortest-map-path mapdata)))))
-                  (fn [map pos] (update-map-path (place-tower pos map)))
+                  (fn [map pos] (update-map-path (place-tower pos (get-tower 'pellet) map)))
                   (fn [map pos] (room-for-tower? pos map))
                   (fn [map] (not (empty? (shortest-map-path map))))
                   (fn [map] (shortest-map-path-cost map))
