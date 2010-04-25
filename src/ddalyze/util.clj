@@ -54,3 +54,13 @@
   (if (= n 1)
     (rand-elt coll)
     (take n (shuffle coll))))
+
+(defmacro choose-exec [& execs]
+  (let [chosen (gensym "chosen")]
+    `(let [~chosen (rand-int ~(count execs))]
+       (cond
+        ~@(mapcat (fn [i e]
+                    `((= ~i ~chosen) ~e))
+                  (range (count execs))
+                  execs)))))
+  

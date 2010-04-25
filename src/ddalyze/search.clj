@@ -108,25 +108,30 @@ http://en.wikipedia.org/wiki/A*_search_algorithm"
                          (disj openset (pos-id x mapdata))
                          came-from g-score h-score f-score))))))))))
 
-(defn genetic-search [state moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn cmp]
+(def *max-generations* 100)
+(def *descendants-from-each* 10)
+(def *number-of-fit-to-keep* 30)
+(def *max-generations-without-max-fitness-change* 5)
+(def *epsilon* 0.01)
+
+(defn genetic-search [state moves-for-state-fn apply-move-fn legal-state? cost-fn cmp]
   "Finds best moves to apply to achieve best cost via genetic search
 moves-for-state-fn: (fn [state]) -> list of 
 apply-move-fn: (fn [state move]) -> state
-legal-move?: (fn [state move]) -> bool
 legal-state?: (fn [state]) -> bool
 cost-fn: (fn [state]) -> comparable via cmp
 cmp: (fn [cost-a cost-b] -> boolean"
-  (let [max-generations 100
-        descendants-from-each 10
-        number-of-fit-to-keep 30
-        max-generations-without-max-fitness-change 5
-        epsilon 0.01]
+  (let [max-generations *max-generations*
+        descendants-from-each *descendants-from-each*
+        number-of-fit-to-keep *number-of-fit-to-keep*
+        max-generations-without-max-fitness-change *max-generations-without-max-fitness-change*
+        epsilon *epsilon*]
     (loop [cur-generation 1
            most-fit (list state)
            greatest-fitness (reduce max (map cost-fn most-fit))
            generations-with-this-fitness 1]
       (when *debug-output*
-        (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" (float greatest-fitness)) "count(most-fit)" (count most-fit)))
+        (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" (float greatest-fitness)) "count(most-fit)" (count most-fit) "map cost:" (map-price (first most-fit))))
       (when *ddebug-output*
         (let [top (take-n-greatest-by 2 cost-fn most-fit)]
           (if (< 1 (count top))
@@ -144,10 +149,9 @@ cmp: (fn [cost-a cost-b] -> boolean"
                                                              (map (fn [state]
                                                                     (cons state
                                                                           (remove nil? (map (fn [move]
-                                                                                              (if (legal-move? state move)
-                                                                                                (let [result-state (apply-move-fn state move)]
-                                                                                                  (if (legal-state? result-state)
-                                                                                                    result-state))))
+                                                                                              (let [result-state (apply-move-fn state move)]
+                                                                                                (if (legal-state? result-state)
+                                                                                                  result-state)))
                                                                                             (choose descendants-from-each (moves-for-state-fn state))))))
                                                                   most-fit))))
               new-greatest-fitness (reduce max (map cost-fn most-fit))]
@@ -205,71 +209,87 @@ cmp: (fn [cost-a cost-b] -> boolean"
 
 ;;;;;; Different analyses
 
-(defn moves-for-state-with-different-towers [mapdata]
-  (distinct (apply concat
-                   (map (fn [path-pos]
-                          (let [tower (choose 1 (possible-tower-types))]
-                            (map (fn [tower-pos]
-                                   (list tower tower-pos))
-                                 (tower-placements-reaching-pos path-pos (get-tower tower) mapdata))))
-                        (shortest-map-path mapdata)))))
+(defn make-move [type & moreargs]
+  (cons type moreargs))
+(defn moves [& move-list]
+  move-list)
 
-(defn best-towers-for-price-fn [price]
+(defn legal-tower-placements-reaching-path [mapdata path tower]
+  (filter (fn [tower-pos]
+            (room-for-tower? tower-pos mapdata))
+          (distinct (apply concat
+                           (map (fn [path-pos]
+                                  (tower-placements-reaching-pos path-pos tower mapdata))
+                                path)))))
+(defn move-lists-for-state-with-different-towers [mapdata possible-towers]
+  (mapcat (fn [tower-type]
+            (let [tower (get-tower tower-type)]
+              (map (fn [tower-pos]
+                     (moves (make-move 'add tower tower-pos)))
+                   (legal-tower-placements-reaching-path mapdata (shortest-map-path mapdata) tower))))
+          possible-towers))
+
+(defn move-lists-for-state-with-different-towers-and-replacement [mapdata budget]
+  (mapcat (fn [remove-tower]
+            (mapcat (fn [add-tower-type]
+                      (let [add-tower (get-tower add-tower-type)]
+                        (map (fn [add-tower-pos]
+                               (if (nil? remove-tower)
+                                 (moves (make-move 'add add-tower add-tower-pos))
+                                 (moves (make-move 'drop remove-tower)
+                                        (make-move 'add add-tower add-tower-pos))))
+                             (let [legal-tower-placements (legal-tower-placements-reaching-path mapdata (shortest-map-path mapdata) add-tower)]
+                               (if (nil? remove-tower)
+                                 legal-tower-placements
+                                 (cons (tower-position remove-tower) legal-tower-placements))))))
+                    (if (nil? remove-tower)
+                      (towers-at-price budget)
+                      (towers-at-price (+ budget (tower-price remove-tower))))))
+          (cons nil
+                (towers-on-map mapdata))))
+                
+
+(defn apply-move-list [mapdata moves]
+  {:pre [(is-map? mapdata)]
+   :post [(is-map? %)]}
+  (loop [moves moves
+         mapdata mapdata]
+    (if (empty? moves)
+      (update-map-path mapdata)
+      (let [[movetype & rest-of-move] (first moves)]
+        (cond
+         (= movetype 'add) (let [[tower pos] rest-of-move]
+                             (recur (rest moves)
+                                    (place-tower pos tower mapdata)))
+         (= movetype 'drop) (let [[tower] rest-of-move]
+                              (recur (rest moves)
+                                     (remove-tower-at-pos (tower-position tower) mapdata)))
+         true (throw (Exception. (format "Unknown movetype %s" movetype))))))))
+
+(defn best-towers-for-price-with-replacement-fn [price]
   (fn [current-map]
-    (let [moves-for-state-fn moves-for-state-with-different-towers
-          apply-move-fn (fn [map [tower pos]]
-                          (update-map-path (place-tower pos (get-tower tower) map)))
-          legal-move? (fn [map [tower pos]]
-                        (room-for-tower? pos map))
+    (let [moves-for-state-fn (fn [mapdata]
+                               (move-lists-for-state-with-different-towers-and-replacement mapdata (- price (map-price mapdata))))
+          apply-move-fn apply-move-list
           legal-state? (fn [map]
                          (and (not (empty? (shortest-map-path map)))
                               (<= (map-price map) price)))
           cost-fn (fn [map]
                     (shortest-map-path-cost map))]
-      (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >))))
+      (genetic-search current-map moves-for-state-fn apply-move-fn legal-state? cost-fn >))))
 
-(defn best-towers-with-different-tower-types [current-map]
-  (let [moves-for-state-fn moves-for-state-with-different-towers
-        apply-move-fn (fn [map [tower pos]]
-                        (update-map-path (place-tower pos (get-tower tower) map)))
-        legal-move? (fn [map [tower pos]]
-                      (room-for-tower? pos map))
-        legal-state? (fn [map]
-                       (not (empty? (shortest-map-path map))))
-        cost-fn (fn [map]
-                  (shortest-map-path-cost map))]
-    (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >)))
-
-(defn best-towers-for-best-coverage [current-map]
-  (let [moves-for-state-fn (fn [mapdata]
-                             (distinct (apply concat
-                                              (map #(tower-placements-reaching-pos %1 (get-tower 'pellet) mapdata)
-                                                   (shortest-map-path mapdata)))))
-        apply-move-fn (fn [map pos]
-                        (update-map-path (place-tower pos (get-tower 'pellet) map)))
-        legal-move? (fn [map pos]
-                      (room-for-tower? pos map))
-        legal-state? (fn [map]
-                       (not (empty? (shortest-map-path map))))
-        cost-fn (fn [map]
-                  (shortest-map-path-cost map))]
-    (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >)))
-
-(defn best-towers-for-longest-path [current-map]
-  (let [moves-for-state-fn (fn [mapdata]
-                             (distinct (apply concat
-                                              (map #(tower-placements-covering-pos %1 mapdata)
-                                                   (shortest-map-path mapdata)))))
-        apply-move-fn (fn [map pos]
-                        (update-map-path (place-tower pos (get-tower 'pellet) map)))
-        legal-move? (fn [map pos]
-                      (room-for-tower? pos map))
-        legal-state? (fn [map]
-                       (not (empty? (shortest-map-path map))))
-        cost-fn (fn [map]
-                  (shortest-map-path-cost map))]
-    (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >)))
+(defn best-towers-for-price-fn [price]
+  (fn [current-map]
+    (let [moves-for-state-fn (fn [mapdata]
+                               (move-lists-for-state-with-different-towers mapdata (towers-at-price (- price (map-price mapdata)))))
+          apply-move-fn apply-move-list
+          legal-state? (fn [map]
+                         (and (not (empty? (shortest-map-path map)))
+                              (<= (map-price map) price)))
+          cost-fn (fn [map]
+                    (shortest-map-path-cost map))]
+      (genetic-search current-map moves-for-state-fn apply-move-fn legal-state? cost-fn >))))
 
 (defn best-towers-for-creeps [current-map]
-  (best-towers-for-best-coverage current-map))
+  ((best-towers-for-price-fn 100000) current-map))
 
