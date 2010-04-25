@@ -2,7 +2,7 @@
   "Utility functions"
   (:use clojure.core
         ddalyze.binds
-        [clojure.contrib.seq-utils :only (shuffle partition-all indexed)]))
+        [clojure.contrib.seq-utils :only (shuffle partition-all indexed rand-elt)]))
 
 (defn drop-first
   ([val coll] (drop-first val identity coll))
@@ -51,4 +51,6 @@
                                      (pmap #(take-n-greatest-by n keyfn cmp %1)
                                            (partition-all partition-size coll))))))))
 (defn choose [n coll]
-  (take n (shuffle coll)))
+  (if (= n 1)
+    (rand-elt coll)
+    (take n (shuffle coll))))

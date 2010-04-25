@@ -202,24 +202,60 @@ cmp: (fn [cost-a cost-b] -> boolean"
 (defn draw-shortest-path [mapdata]
   (draw-path (shortest-map-path mapdata) mapdata))
 
-(defn best-towers-for-creeps [current-map]
-  (genetic-search current-map
-                  (fn [mapdata] (distinct (apply concat
-                                                 (map #(tower-placements-reaching-pos %1 (get-tower 'pellet) mapdata)
-                                                      (shortest-map-path mapdata)))))
-                  (fn [map pos] (update-map-path (place-tower pos (get-tower 'pellet) map)))
-                  (fn [map pos] (room-for-tower? pos map))
-                  (fn [map] (not (empty? (shortest-map-path map))))
-                  (fn [map] (shortest-map-path-cost map))
-                  >))
+
+;;;;;; Different analyses
+
+(defn moves-for-state-with-different-towers [mapdata]
+  (distinct (apply concat
+                   (map (fn [path-pos]
+                          (let [tower (choose 1 (possible-tower-types))]
+                            (map (fn [tower-pos]
+                                   (list tower tower-pos))
+                                 (tower-placements-reaching-pos path-pos (get-tower tower) mapdata))))
+                        (shortest-map-path mapdata)))))
+
+(defn best-towers-with-different-tower-types [current-map]
+  (let [moves-for-state-fn moves-for-state-with-different-towers
+        apply-move-fn (fn [map [tower pos]]
+                        (update-map-path (place-tower pos (get-tower tower) map)))
+        legal-move? (fn [map [tower pos]]
+                      (room-for-tower? pos map))
+        legal-state? (fn [map]
+                       (not (empty? (shortest-map-path map))))
+        cost-fn (fn [map]
+                  (shortest-map-path-cost map))]
+    (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >)))
+
+(defn best-towers-for-best-coverage [current-map]
+  (let [moves-for-state-fn (fn [mapdata]
+                             (distinct (apply concat
+                                              (map #(tower-placements-reaching-pos %1 (get-tower 'pellet) mapdata)
+                                                   (shortest-map-path mapdata)))))
+        apply-move-fn (fn [map pos]
+                        (update-map-path (place-tower pos (get-tower 'pellet) map)))
+        legal-move? (fn [map pos]
+                      (room-for-tower? pos map))
+        legal-state? (fn [map]
+                       (not (empty? (shortest-map-path map))))
+        cost-fn (fn [map]
+                  (shortest-map-path-cost map))]
+    (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >)))
 
 (defn best-towers-for-longest-path [current-map]
-  (genetic-search current-map
-                  (fn [mapdata] (distinct (apply concat
-                                                 (map #(tower-placements-covering-pos %1 mapdata)
-                                                      (shortest-map-path mapdata)))))
-                  (fn [map pos] (update-map-path (place-tower pos (get-tower 'pellet) map)))
-                  (fn [map pos] (room-for-tower? pos map))
-                  (fn [map] (not (empty? (shortest-map-path map))))
-                  (fn [map] (shortest-map-path-cost map))
-                  >))
+  (let [moves-for-state-fn (fn [mapdata]
+                             (distinct (apply concat
+                                              (map #(tower-placements-covering-pos %1 mapdata)
+                                                   (shortest-map-path mapdata)))))
+        apply-move-fn (fn [map pos]
+                        (update-map-path (place-tower pos (get-tower 'pellet) map)))
+        legal-move? (fn [map pos]
+                      (room-for-tower? pos map))
+        legal-state? (fn [map]
+                       (not (empty? (shortest-map-path map))))
+        cost-fn (fn [map]
+                  (shortest-map-path-cost map))]
+    (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >)))
+
+(defn best-towers-for-creeps [current-map]
+  (best-towers-for-best-coverage current-map))
+

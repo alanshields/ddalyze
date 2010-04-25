@@ -16,7 +16,9 @@
       \O 'exit
       \i 'spawnexit
       \a 'path
-      \T 'tower})
+      \T 'tower
+      \P 'pellet
+      \S 'squirt})
 (def *map-type->-char*
      (zipmap (vals *map-char->-type*)
              (keys *map-char->-type*)))

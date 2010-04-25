@@ -25,15 +25,19 @@
   (get *towers* tower-type))
 
 (defn is-pos? [p]
-  (and (:row p)
+  (and (ifn? p)
+       (:row p)
        (:column p)))
 (defn is-map? [m]
-  (:blocks m))
+  (and (ifn? m)
+       (:blocks m)))
 (defn is-map-block? [b]
-  (and (is-pos? b)
+  (and (ifn? b)
+       (is-pos? b)
        (:type b)))
 (defn is-tower? [t]
-  (and (:name t)
+  (and (ifn? t)
+       (:name t)
        (:range t)
        (:damage t)
        (:attacks-per-second t)
@@ -186,6 +190,8 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
   (pos-offset pos 0.5 0.5))
 (defn tower-center-position [tower]
   (pos-to-tower-center (tower-position tower)))
+(defn tower-name [tower]
+  (:name tower))
 (defn tower-range [tower]
   (:range tower))
 (defn tower-damage [tower]
@@ -205,7 +211,7 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
             (is-map? mapdata)]}
      (let [b #(block-at-offset pos %1 %2 mapdata)]
        (if (room-for-tower? pos mapdata)
-         (let [newmap (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) 'tower mapdata)
+         (let [newmap (set-pos-types (list (b 0 0) (b 0 1) (b 1 0) (b 1 1)) (tower-name tower) mapdata)
                current-towers (:towers newmap)]
            (assoc newmap :towers (cons (tower-with-position tower pos) current-towers)))
          on-fail))))
@@ -222,6 +228,9 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
             possible-moves)))
 (defn tower-placements-reaching-pos [pos tower mapdata]
   "Returns a list of legal tower placements that would be in range of pos"
+  {:pre [(is-pos? pos)
+         (is-tower? tower)
+         (is-map? mapdata)]}
   (filter #(room-for-tower? %1 mapdata)
           (blocks-within-distance (pos-to-tower-center pos) (tower-range tower) mapdata)))
 (defn towers-within-range [pos mapdata]
