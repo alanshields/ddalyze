@@ -214,6 +214,20 @@ cmp: (fn [cost-a cost-b] -> boolean"
                                  (tower-placements-reaching-pos path-pos (get-tower tower) mapdata))))
                         (shortest-map-path mapdata)))))
 
+(defn best-towers-for-price-fn [price]
+  (fn [current-map]
+    (let [moves-for-state-fn moves-for-state-with-different-towers
+          apply-move-fn (fn [map [tower pos]]
+                          (update-map-path (place-tower pos (get-tower tower) map)))
+          legal-move? (fn [map [tower pos]]
+                        (room-for-tower? pos map))
+          legal-state? (fn [map]
+                         (and (not (empty? (shortest-map-path map)))
+                              (<= (map-price map) price)))
+          cost-fn (fn [map]
+                    (shortest-map-path-cost map))]
+      (genetic-search current-map moves-for-state-fn apply-move-fn legal-move? legal-state? cost-fn >))))
+
 (defn best-towers-with-different-tower-types [current-map]
   (let [moves-for-state-fn moves-for-state-with-different-towers
         apply-move-fn (fn [map [tower pos]]

@@ -121,11 +121,8 @@ Can also be used to do a fast lookup on a position via block-at"
   (filter pred? (:blocks map)))
 (defn block-map [fn mapdata]
   (map fn (:blocks mapdata)))
-
-(defn map-towers [mapdata]
+(defn towers-on-map [mapdata]
   (:towers mapdata))
-(defn map-price [mapdata]
-  (reduce + (map :cost (map-towers mapdata))))
 
 (defn order-map [map]
   (new-map 
@@ -196,6 +193,12 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
   (:range tower))
 (defn tower-damage [tower]
   (:damage tower))
+(defn tower-price [tower]
+  (:price tower))
+(defn map-price [mapdata]
+  "Price for buying all the towers in a map"
+  (reduce + (map tower-price (towers-on-map mapdata))))
+
 (defn place-tower
   "Will fail only if there is no room for the tower - tower will be allowed to block the path"
   ([pos tower mapdata]
