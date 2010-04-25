@@ -50,10 +50,14 @@
                              (reduce concat
                                      (pmap #(take-n-greatest-by n keyfn cmp %1)
                                            (partition-all partition-size coll))))))))
-(defn choose [n coll]
-  (if (= n 1)
-    (rand-elt coll)
-    (take n (shuffle coll))))
+(defn choose
+  ([coll] (choose 1 coll))
+  ([n coll]
+     (if (empty? coll)
+       nil
+       (if (= n 1)
+         (rand-elt coll)
+         (take n (shuffle coll))))))
 
 (defmacro choose-exec [& execs]
   (let [chosen (gensym "chosen")]
