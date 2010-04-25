@@ -111,6 +111,9 @@ Can also be used to do a fast lookup on a position via block-at"
      (if (contains? (:blocks map) pos-id)
        (get (:blocks map) pos-id))))
 (defn pos-offset [pos r c]
+  {:pre [(is-pos? pos)
+         (number? r)
+         (number? c)]}
   (new-pos (+ r (:row pos))
            (+ c (:column pos))))
 (defn block-at-offset [pos r c map]
@@ -240,21 +243,21 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
   ([pos distance map comparator] (matching-blocks #(<= (comparator pos %1) distance) map)))
 
 (defn tower-placements-covering-pos [pos mapdata]
-  "Returns a list of legal tower placements that covers position pos"
   {:pre [(is-pos? pos)
          (is-map? mapdata)]}
+  "Returns a list of legal tower placements that covers position pos"
   (let [possible-moves (map #(let [[r c] %1]
                                (block-at-offset pos r c mapdata))
                             '((0 0) (-1 0) (0 -1) (-1 -1)))]
-    
+    (println possible-moves)
     (filter #(and (not (nil? %1))
                   (room-for-tower? %1 mapdata))
             possible-moves)))
 (defn tower-placements-reaching-pos [pos tower mapdata]
-  "Returns a list of legal tower placements that would be in range of pos"
   {:pre [(is-pos? pos)
          (is-tower? tower)
          (is-map? mapdata)]}
+  "Returns a list of legal tower placements that would be in range of pos"
   (filter #(room-for-tower? %1 mapdata)
           (blocks-within-distance (pos-to-tower-center pos) (tower-range tower) mapdata)))
 (defn towers-within-range [pos mapdata]
