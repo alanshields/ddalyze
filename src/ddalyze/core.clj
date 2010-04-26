@@ -49,16 +49,27 @@
     (println best-scores)))
 
 (def *current-map* (ref nil))
+(def *all-maps* (ref nil))
 
 (defn set-current-map [mapdata]
-  (dosync (ref-set *current-map* mapdata)))
+  (dosync
+   (ref-set *current-map* mapdata)
+   (ref-set *all-maps* (list mapdata))))
 (defn current-map []
   @*current-map*)
-(defn print-current-map []
-  (println "Score:" (shortest-map-path-cost @*current-map*))
-  (println (show-map-compares (draw-shortest-path @*current-map*) @*current-map*)))
+(defn print-current-map
+  ([] (print-current-map @*current-map*))
+  ([mapdata]
+     (println "Score:" (shortest-map-path-cost mapdata))
+     (println (show-map-compares (draw-shortest-path mapdata) mapdata))))
 (defn update-current-map [new-budget]
   (dosync
    (let [old-map @*current-map*]
      (ref-set *current-map* ((best-towers-for-budget-fn new-budget) old-map))
-     (println (show-map-compares (draw-shortest-path @*current-map*) @*current-map*)))))
+     (ref-set *all-maps* (cons *current-map* *all-maps*)))
+   (println (show-map-compares (draw-shortest-path @*current-map*) @*current-map*)))))
+(defn print-all-maps []
+  (loop [maps @*all-maps*]
+    (if (not (empty? maps))
+      (print-current-map (first maps))
+      (recur (rest maps)))))
