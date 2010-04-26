@@ -66,10 +66,10 @@
   (dosync
    (let [old-map @*current-map*]
      (ref-set *current-map* ((best-towers-for-budget-fn new-budget) old-map))
-     (ref-set *all-maps* (cons *current-map* *all-maps*)))
-   (println (show-map-compares (draw-shortest-path @*current-map*) @*current-map*)))))
+     (ref-set *all-maps* (cons @*current-map* @*all-maps*)))
+   (print-current-map)))
 (defn print-all-maps []
-  (loop [maps @*all-maps*]
-    (if (not (empty? maps))
+  (loop [maps (reverse @*all-maps*)]
+    (when (not (empty? maps))
       (print-current-map (first maps))
       (recur (rest maps)))))
