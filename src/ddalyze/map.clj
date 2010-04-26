@@ -14,8 +14,24 @@
 
 ; range is in blocks, not towers!
 (def *towers*
-     (hash-map 'pellet {:name 'pellet :range 4 :damage 5 :attacks-per-second 1 :price 5}
-               'squirt {:name 'squirt :range 5 :damage 10 :attacks-per-second 2 :price 15}))
+     (hash-map 'pellet {:name 'pellet :range 4 :damage 5 :attacks-per-second 1 :price 5 :level 1}
+               'squirt {:name 'squirt :range 5 :damage 10 :attacks-per-second 1 :price 15 :level 1}))
+(def *tower-upgrades*
+     (hash-map 'pellet '({:damage 5 :price 5 :level 1}
+                         {:damage 10 :price 5 :level 2}
+                         {:damage 20 :price 10 :level 3}
+                         {:damage 30 :price 10 :level 4}
+                         {:damage 40 :price 10 :level 5})
+               'squirt '({:price 15 :damage 10 :level 1}
+                         {:price 10 :damage 20 :level 2}
+                         {:price 20 :damage 40 :level 3}
+                         {:price 35 :damage 80 :level 4}
+                         {:price 120 :damage 640 :attacks-per-second 2 :level 5})))
+
+(defn get-tower-upgrade [tower]
+  (first (filter #(= (+ 1 (:level tower)) (:level %1))
+                 (:level (get *tower-upgrades* (:name tower))))))
+               
 (defn possible-tower-types []
   (keys *towers*))
 (defn towers-at-price [d]
@@ -64,6 +80,7 @@
 (defmap-type-match spawn? '(spawn spawnexit))
 (defmap-type-match exit? '(exit spawnexit))
 (defmap-type-match creepable? '(playable exit path spawnexit))
+(defmap-type-match path? '(path))
 
 (defn is-pos [row col block]
   (and (= (:row block) row)
@@ -113,15 +130,30 @@ Can also be used to do a fast lookup on a position via block-at"
 (defn pos-offset [pos r c]
   {:pre [(is-pos? pos)
          (number? r)
-         (number? c)]}
-  (new-pos (+ r (:row pos))
-           (+ c (:column pos))))
+         (number? c)]
+   :post [(or (nil? %)
+              (and (not (neg? (:row %)))
+                   (not (neg? (:column %)))))]}
+  (let [nr (+ r (:row pos))
+        nc (+ c (:column pos))]
+    (if (and (not (neg? nr))
+             (not (neg? nc)))
+      (new-pos nr nc))))
 (defn block-at-offset [pos r c map]
   {:pre [(is-pos? pos)
          (number? r)
          (number? c)
-         (is-map? map)]}
-  (block-at (pos-id (pos-offset pos r c) map) map))
+         (is-map? map)]
+   :post [(or (nil? %)
+              (and (<= 0 (:row %))
+                   (<= 0 (:column %))
+                   (> (:row-count map) (:row %))
+                   (> (:column-count map) (:column %))))]}
+  (let [new-pos (pos-offset pos r c)]
+    (if (and (not (nil? new-pos))
+             (> (:row-count map) (:row new-pos))
+             (> (:column-count map) (:column new-pos)))
+      (block-at (pos-id new-pos map) map))))
   
 (defn matching-blocks [pred? map]
   (filter pred? (:blocks map)))

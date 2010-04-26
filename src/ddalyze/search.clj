@@ -2,45 +2,48 @@
   "Pathing and analysis functions"
   (:use clojure.core
         [clojure.contrib.combinatorics :only (cartesian-product)]
+        [clojure.contrib.greatest-least :only (least-by)]
         ddalyze.binds
         ddalyze.map
         ddalyze.util
         ddalyze.parse))
 
 
-(defn all-legal-ground-creep-moves [pos map]
-  (let [offset-block (fn [r c]
-                       (block-at-offset pos r c map))
-        creep-or-nil (fn [block]
-                       (if (and block (creepable? block))
-                         block
-                         nil))]
-    (let [ur (offset-block 1 1)
-          lr (offset-block -1 1)
-          ll (offset-block -1 -1)
-          ul (offset-block 1 -1)
-          u  (offset-block 1 0)
-          r  (offset-block 0 1)
-          d  (offset-block -1 0)
-          l  (offset-block 0 -1)
-          u? (creep-or-nil u)
-          r? (creep-or-nil r)
-          d? (creep-or-nil d)
-          l? (creep-or-nil l)]
-      (filter creepable?
-              (remove nil?
-                      (list u
-                            r
-                            d
-                            l
-                            (if (and u? r?)
-                              ur)
-                            (if (and r? d?)
-                              lr)
-                            (if (and d? l?)
-                              ll)
-                            (if (and l? u?)
-                              ul)))))))
+(defn all-legal-ground-creep-moves
+  ([pos map] (all-legal-ground-creep-moves pos creepable? map))
+  ([pos match-fn map]
+     (let [offset-block (fn [r c]
+                          (block-at-offset pos r c map))
+           creep-or-nil (fn [block]
+                          (if (and block (match-fn block))
+                            block
+                            nil))]
+       (let [ur (offset-block 1 1)
+             lr (offset-block -1 1)
+             ll (offset-block -1 -1)
+             ul (offset-block 1 -1)
+             u  (offset-block 1 0)
+             r  (offset-block 0 1)
+             d  (offset-block -1 0)
+             l  (offset-block 0 -1)
+             u? (creep-or-nil u)
+             r? (creep-or-nil r)
+             d? (creep-or-nil d)
+             l? (creep-or-nil l)]
+         (filter match-fn
+                 (remove nil?
+                         (list u
+                               r
+                               d
+                               l
+                               (if (and u? r?)
+                                 ur)
+                               (if (and r? d?)
+                                 lr)
+                               (if (and d? l?)
+                                 ll)
+                               (if (and l? u?)
+                                 ul))))))))
 
 
 (defn a* [from goal legal-moves-for-pos-fn mapdata]
@@ -155,17 +158,31 @@ cmp: (fn [cost-a cost-b] -> boolean"
                    (inc generations-with-this-fitness)
                    1)))))))
 
-(defn a*-shortest-creep-path [mapdata]
-  "Confirm that every spawn can reach every exit, then return the shortest path"
+(defn a*-path-along [start finish maptype mapdata]
+  (a* start finish (fn [pos] (all-legal-ground-creep-moves pos #(is-type maptype %1) mapdata)) mapdata))
+
+(defn a*-all-creep-paths [mapdata]
   (let [spawns (matching-blocks spawn? mapdata)
         exits (matching-blocks exit? mapdata)
         path (fn [start finish]
                (a* start finish #(all-legal-ground-creep-moves %1 mapdata) mapdata))]
-    (let [all-paths (pmap (fn [[start finish]] (path start finish))
-                          (remove (fn [[a b]] (adjacent? a b))
+    (let [all-paths (pmap (fn [[start finish]] (list start finish (path start finish)))
+                          (remove (fn [[a b]] (or (adjacent? a b)
+                                                  (a*-path-along a b 'spawnexit mapdata)))
                                   (cartesian-product spawns exits)))]
       (if (every? not-empty all-paths)
-        (first (take-n-greatest-by 1 count < all-paths))))))
+        (let [exit-paths-for-spawn (fn [spawn]
+                                     (remove nil?
+                                             (map (fn [[start finish path]]
+                                                    (if (pos= start spawn)
+                                                      path))
+                                                  all-paths)))]
+          (map (fn [spawn]
+                 (apply least-by (cons count (exit-paths-for-spawn spawn))))
+               spawns))))))
+(defn a*-shortest-creep-path [mapdata cost-fn]
+  "Confirm that every spawn can reach every exit, then return the shortest path"
+  (first (take-n-greatest-by 1 cost-fn < (a*-all-creep-paths mapdata))))
 
 (defn creep-path-cost [path mapdata]
   "Cost of moving along this path"
@@ -179,7 +196,7 @@ cmp: (fn [cost-a cost-b] -> boolean"
                       path)))))
 
 (defn update-map-path [mapinfo]
-  (let [shortest-path (a*-shortest-creep-path mapinfo)]
+  (let [shortest-path (a*-shortest-creep-path mapinfo #(creep-path-cost %1 mapinfo))]
     (struct mapdata (:blocks mapinfo) (:row-count mapinfo) (:column-count mapinfo) shortest-path (creep-path-cost shortest-path mapinfo) (:towers mapinfo))))
 (defn shortest-map-path [mapinfo]
   (let [mapinfo-with-path (if (nil? (:shortest-path mapinfo))
@@ -257,6 +274,21 @@ cmp: (fn [cost-a cost-b] -> boolean"
                               (recur (rest moves)
                                      (remove-tower-at-pos (tower-position tower) mapdata)))
          true (throw (Exception. (format "Unknown movetype %s" movetype))))))))
+
+(defn best-towers-for-budget-with-upgrades-fn [budget]
+  (fn [current-map]
+    (genetic-search current-map
+                    (fn [state]
+                      (let [tower (choose (towers-at-price (- budget (map-price state))))
+                            path-pos (choose (shortest-map-path state))]
+                        (if (and tower path-pos)
+                          (let [placement (choose (tower-placements-reaching-pos path-pos (get-tower tower) state))]
+                            (if placement
+                              (place-tower placement (get-tower tower) state)
+                              state))
+                          state)))
+                    shortest-map-path-cost
+                    >)))
 
 (defn best-towers-for-budget-fn [budget]
   (fn [current-map]
