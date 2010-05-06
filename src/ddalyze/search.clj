@@ -2,12 +2,72 @@
   "Pathing and analysis functions"
   (:use clojure.core
         [clojure.contrib.combinatorics :only (cartesian-product)]
-        [clojure.contrib.greatest-least :only (least-by)]
+        [clojure.contrib.greatest-least :only (greatest-by least-by)]
         ddalyze.binds
         ddalyze.map
         ddalyze.util
         ddalyze.parse))
 
+
+;; Map heterogenity
+
+(defn distance-2d [pt-a pt-b]
+  (let [[x-a y-a] pt-a
+        [x-b y-b] pt-b
+        x-diff (- x-a x-b)
+        y-diff (- y-a y-b)]
+    (Math/sqrt (float (+ (* x-diff x-diff)
+                         (* y-diff y-diff))))))
+(defn avg-2d [coll]
+  "Average a collection of 2d points"
+  {:pre [(not (empty? coll))]}
+  [(/ (reduce + (map first coll)) (count coll))
+   (/ (reduce + (map second coll)) (count coll))])
+(defn fingerprint-map [mapdata]
+  (let [tower-positions (map tower-position (towers-on-map mapdata))
+        row-pos (map :row tower-positions)
+        column-pos (map :column tower-positions)]
+    (if (empty? tower-positions)
+      [0 0]
+      [(/ (reduce + (map inc row-pos)) (count row-pos))
+       (/ (reduce + (map inc column-pos)) (count column-pos))])))
+(defn map-to-centroid-distance [mapdata centroid]
+  (distance-2d (fingerprint-map mapdata) centroid))
+
+(defn partition-by-minimum-distance-to-centroids [coll centroids distance-fn]
+  "Given a set of objects COLL and a set of objects CENTROIDS, partition COLL into lists by closest member in CENTROIDS based on DISTANCE-FN
+IE (partition-by-minimum-distance-to-centroids '(1 2  4 5  10 11) '(1 4 10) #(Math/abs (- %1 %2)))
+   => '((1 2) (4 5) (10 11))
+
+Returns in order of CENTROIDS"
+  (let [point-closest-pairs (map (fn [point]
+                                   (list point
+                                         (apply least-by #(distance-fn point %1) centroids)))
+                                 coll)
+        points-in-means (map (fn [centroid]
+                               (map first
+                                    (filter #(= centroid (second %1))
+                                            point-closest-pairs)))
+                             centroids)]
+    points-in-means))
+                                   
+(defn k-means [points k distance-fn avg-fn epsilon]
+  {:pre [(not (zero? k))]}
+  (let [k (min k (count points))]
+    (let [err-and-points (fn []
+                           (loop [means (choose k points)
+                                  old-r 0]
+                             (let [points-in-means (partition-by-minimum-distance-to-centroids points means distance-fn)
+                                   new-means (map avg-fn points-in-means)
+                                   r (reduce + (map (fn [mean points-in-mean]
+                                                      (reduce + (map #(distance-fn mean %1) points-in-mean)))
+                                                    new-means
+                                                    points-in-means))]
+                               (if (and (not (nil? old-r))
+                                        (>= epsilon (Math/abs (float (- r old-r)))))
+                                 (cons r new-means)
+                                 (recur new-means r)))))]
+      (rest (apply least-by first (take 5 (repeatedly err-and-points)))))))
 
 (defn all-legal-ground-creep-moves
   ([pos map] (all-legal-ground-creep-moves pos creepable? map))
@@ -138,8 +198,10 @@ cmp: (fn [cost-a cost-b] -> boolean"
           (if (< 1 (count top))
             (let [[a b] top]
               (println (format "top 2: %.2f vs %.2f" (float (cost-fn a)) (float (cost-fn b))))
+              (println (format "fingerprints %s vs %s" (fingerprint a) (fingerprint b)))
               (println (show-map-compares a b)))
             (do
+              (println (format "fingerprint %s" (fingerprint (first top))))
               (println (format "top 1: %.2f" (float (cost-fn (first top)))))
               (println (map-to-string (first top)))))))
       (if (or (>= cur-generation max-generations)
@@ -149,6 +211,57 @@ cmp: (fn [cost-a cost-b] -> boolean"
                                             (distinct (mapcat (fn [state]
                                                                 (map new-state-fn (repeat descendants-from-each state)))
                                                               most-fit)))
+              new-greatest-fitness (reduce max (map cost-fn most-fit))]
+          (recur (inc cur-generation)
+                 most-fit
+                 new-greatest-fitness
+                 (if (< (Math/abs (- new-greatest-fitness greatest-fitness))
+                        epsilon)
+                   (inc generations-with-this-fitness)
+                   1)))))))
+
+(defn genetic-search* [state new-state-fn cost-fn cmp]
+  "Finds best moves to apply to achieve best cost via genetic search
+new-state-fn: (fn [oldstate]) -> returns a new state from the old state
+cost-fn: (fn [state]) -> comparable via cmp
+cmp: (fn [cost-a cost-b] -> boolean"
+  (let [max-generations *max-generations*
+        descendants-from-each *descendants-from-each*
+        number-of-fit-to-keep *number-of-fit-to-keep*
+        max-generations-without-max-fitness-change *max-generations-without-max-fitness-change*
+        epsilon *epsilon*]
+    (loop [cur-generation 1
+           most-fit (list state)
+           greatest-fitness (reduce max (map cost-fn most-fit))
+           generations-with-this-fitness 1]
+      (when *debug-output*
+        (println "generation:" cur-generation "greatest-fitness:" (format "%.2f" (float greatest-fitness)) "count(most-fit)" (count most-fit) "map cost:" (map-price (first most-fit))))
+      (when *ddebug-output*
+        (let [top (take-n-greatest-by 2 cost-fn most-fit)]
+          (if (< 1 (count top))
+            (let [[a b] top]
+              (println (format "top 2: %.2f vs %.2f" (float (cost-fn a)) (float (cost-fn b))))
+              (println (format "fingerprints %s vs %s" (fingerprint a) (fingerprint b)))
+              (println (show-map-compares a b)))
+            (do
+              (println (format "fingerprint %s" (fingerprint (first top))))
+              (println (format "top 1: %.2f" (float (cost-fn (first top)))))
+              (println (map-to-string (first top)))))))
+      (if (or (>= cur-generation max-generations)
+              (>= generations-with-this-fitness max-generations-without-max-fitness-change))
+        (first (take-n-greatest-by 1 cost-fn most-fit))
+        (let [all-descendants (distinct (mapcat (fn [state]
+                                                  (map new-state-fn (repeat descendants-from-each state)))
+                                                most-fit))
+              upper-half (take-n-greatest-by (int (/ (* descendants-from-each number-of-fit-to-keep) 2)) cost-fn all-descendants)
+              most-fit (map #(apply greatest-by cost-fn %1)
+                                          (partition-by-minimum-distance-to-centroids upper-half
+                                                                                      (k-means (map fingerprint-map upper-half)
+                                                                                               number-of-fit-to-keep
+                                                                                               distance-2d
+                                                                                               avg-2d
+                                                                                               0.01)
+                                                                                      map-to-centroid-distance))
               new-greatest-fitness (reduce max (map cost-fn most-fit))]
           (recur (inc cur-generation)
                  most-fit
@@ -293,6 +406,20 @@ cmp: (fn [cost-a cost-b] -> boolean"
 (defn best-towers-for-budget-fn [budget]
   (fn [current-map]
     (genetic-search current-map
+                    (fn [state]
+                      (let [tower (choose (towers-at-price (- budget (map-price state))))
+                            path-pos (choose (shortest-map-path state))]
+                        (if (and tower path-pos)
+                          (let [placement (choose (tower-placements-reaching-pos path-pos (get-tower tower) state))]
+                            (if placement
+                              (place-tower placement (get-tower tower) state)
+                              state))
+                          state)))
+                    shortest-map-path-cost
+                    >)))
+(defn best-towers-for-budget-fn* [budget]
+  (fn [current-map]
+    (genetic-search* current-map
                     (fn [state]
                       (let [tower (choose (towers-at-price (- budget (map-price state))))
                             path-pos (choose (shortest-map-path state))]

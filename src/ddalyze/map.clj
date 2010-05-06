@@ -2,6 +2,7 @@
   "Map and block functions"
   (:use clojure.core
         ddalyze.binds))
+        ;[incanter.core :as matrix]))
 
 ;; Map block types
 ;;   "A map block is a square on the board. A tower takes up 4 map blocks."
@@ -238,6 +239,9 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
 (defn map-price [mapdata]
   "Price for buying all the towers in a map"
   (reduce + (map tower-price (towers-on-map mapdata))))
+(defn map-size [mapdata]
+  (* (:row-count mapdata)
+     (:column-count mapdata)))
 
 (defn place-tower
   "Will fail only if there is no room for the tower - tower will be allowed to block the path"
@@ -302,3 +306,30 @@ Yes, I know adjacent usually doesn't mean congruent, but it helps a lot here"
   (set-pos-types path
                  'path
                  mapdata))
+
+;;; Map similarity
+;; (defn tower-positions-2d-vector [mapdata]
+;;   (loop [tower-positions (vec (repeat (map-size mapdata) -1))
+;;          pos-queue (towers-on-map mapdata)]
+;;     (if (empty? pos-queue)
+;;       tower-positions
+;;       (recur (assoc tower-positions (pos-id (tower-position (first pos-queue)) mapdata) 1)
+;;              (rest pos-queue)))))
+;; (defn fingerprint [mapdata]
+;;   "Fingerprint of tower locations using a DCT."
+;;   (let [mat (matrix/matrix (tower-positions-2d-vector mapdata) (:column-count mapdata))
+;;         range (float (* 2 (map-size mapdata)))]
+;;     (.dct2 mat false)
+;;     (let [[a b c] (matrix/sel mat :cols '(3 4 5) :rows 0)
+;;           quant (fn [bits val] (let [maxval (Math/pow 2 bits)]
+;;                                  (+ (* (/ val range) (/ maxval 2))
+;;                                     (/ maxval 2))))
+;;           offset (fn [bits val] (int (* val (Math/pow 2 bits))))]
+;;       (println "range" range)
+;;       (println "a" a "b" b "c" c)
+;;       (println "q(a)" (quant 72 a) "q(b)" (quant 32 b) "q(c)" (quant 24 c))
+;;       (println "a/r" (float (/ a range)) "b/r" (float (/ b range)) "c/r" (float (/ c range)))
+;;       (+ (offset 56 (quant 72 a))
+;;          (offset 24 (quant 32 b))
+;;          (offset  0 (quant 24 c))))))
+

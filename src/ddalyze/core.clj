@@ -48,8 +48,22 @@
     (println "sd:" (sd (map first best-scores)))
     (println best-scores)))
 
-(def *current-map* (ref nil))
-(def *all-maps* (ref nil))
+(defn compare-genetic-searches [file]
+  (binding [*ddebug-output* false
+            *debug-output* false
+            *max-generations* 20
+            *descendants-from-each* 10
+            *number-of-fit-to-keep* 10]
+    (let [current-map (map-from-map-file file)
+          number-of-trials 15
+          method1-scores (time (reverse (take number-of-trials (repeatedly #(shortest-map-path-cost ((best-towers-for-budget-fn 140) current-map))))))
+          method2-scores (time (reverse (take number-of-trials (repeatedly #(shortest-map-path-cost ((best-towers-for-budget-fn* 140) current-map))))))]
+      (println "method1 min:" (apply min method1-scores) "avg:" (float (/ (reduce + method1-scores) number-of-trials))"+/-" (sd method1-scores)
+               "method2 min:" (apply min method2-scores) "avg:" (float (/ (reduce + method2-scores) number-of-trials)) "+/-" (sd method2-scores)))))
+    
+
+;; (def *current-map* (ref nil))
+;; (def *all-maps* (ref nil))
 
 (defn set-current-map [mapdata]
   (dosync
